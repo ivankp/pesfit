@@ -1,7 +1,7 @@
 CC  := gcc
 CXX := g++
 
-CXXFLAGS := -std=c++11 -Wall -g
+CXXFLAGS := -std=c++11 -Wall -O3
 
 ROOT_CXXFLAGS := $(shell root-config --cflags)
 ROOT_LIBS     := $(shell root-config --libs)
@@ -55,4 +55,3 @@ clean:
 	@rm -vfr $(BLDDIR) $(EXEDIR)
 
 #$(EXEDIR)/play: $(BLDDIR)/node.o $(BLDDIR)/neuron.o $(BLDDIR)/network.o
-

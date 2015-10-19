@@ -60,13 +60,14 @@ TLatex *lbl;
 // --------------------------
 
 void make_hist(TH1*& hist, const char* name, const char* branch, double scale) {
-  const string cmd(cat(branch,"/1000>>hist(",nbins,",105,160)"));
-  tree->Draw( cmd.c_str(),
-    "HGamEventInfoAuxDyn.weight*(HGamEventInfoAuxDyn.isPassed==1)"
-  );
-  cout << cmd << endl;
+  const string cmd1(cat(branch,"/1000>>hist(",nbins,",105,160)"));
+  const string cmd2("HGamEventInfoAuxDyn.weight*(HGamEventInfoAuxDyn.isPassed==1)");
+  tree->Draw(cmd1.c_str(),cmd2.c_str());
+  cout << endl << name
+       << endl << cmd1
+       << endl << cmd2 << endl;
   TH1 *temp = get<TH1>(gDirectory,"hist");
-  temp->Scale(scale);
+  temp->Scale(scale*temp->GetBinWidth(1));
   if (!hist)
     (hist = (TH1*)temp->Clone(name))->SetDirectory(0);
   else hist->Add(temp);
@@ -92,6 +93,8 @@ void draw(const initializer_list<TH1*>& hs) {
 
     if (it==hs.begin()) {
       hist->SetXTitle("m_{#gamma#gamma} [GeV]");
+      hist->SetYTitle("d#sigma/dm_{#gamma#gamma} [pb/GeV]");
+      hist->SetTitleOffset(1.3,"Y");
       hist->Draw();
       latex(lbl,.67,0.88-0.04*i,"Entries");
       latex(lbl,.77,0.88-0.04*i,"mean");
@@ -179,18 +182,13 @@ int main(int argc, char** argv)
   for (const string& f : ifname) {
     TFile *file = new TFile(f.c_str(),"read");
     if (file->IsZombie()) return 1;
-    cout << f << endl;
+    cout << "Data file: " << f << endl;
     tree = get<TTree>(file,"CollectionTree");
 
     const size_t slash = f.find('/')+1;
     const double xsecscale = 1./get<TH1>(file,
       ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
     )->GetBinContent(3);
-    // regex to find the right hist
-    // convert to differential cross section
-    // fitt gaussian and crystal ball
-
-    // Is HGamEventInfoAuxDyn.crossSectionBRfilterEff name?
 
     make_hist(nom,"nominal",
               "HGamEventInfoAuxDyn.m_yy",xsecscale);
