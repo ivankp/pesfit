@@ -67,7 +67,7 @@ void make_hist(TH1*& hist, const char* name, const char* branch, double scale) {
        << endl << cmd1
        << endl << cmd2 << endl;
   TH1 *temp = get<TH1>(gDirectory,"hist");
-  temp->Scale(scale*temp->GetBinWidth(1));
+  temp->Scale(scale/temp->GetBinWidth(1));
   if (!hist)
     (hist = (TH1*)temp->Clone(name))->SetDirectory(0);
   else hist->Add(temp);
