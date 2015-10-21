@@ -38,6 +38,20 @@ template<typename T> using usmap = unordered_map<string,T>;
 
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
+  
+namespace std {
+  template <typename T1, typename T2>
+  istream& operator>>(istream& in, pair<T1,T2>& p) {
+    string s;
+    in >> s;
+    size_t sep = s.find(':');
+    if (sep==string::npos) throw invalid_argument(
+      cat('\"',s,"\": pair values must be delimited by \':\'"));
+    stringstream (s.substr(0,sep)) >> p.first;
+    stringstream (s.substr(sep+1)) >> p.second;
+    return in;
+  }
+}
 
 template<typename T>
 inline T* get(TDirectory* d, const char* name) {
@@ -64,7 +78,9 @@ string ofname, cfname, wfname;
 vector<string> ifname;
 vector<Color_t> colors;
 Int_t nbins;
+pair<double,double> xrange;
 bool print_stats, logy;
+vector<pair<string,pair<double,double>>> new_ws_ranges;
 // --------------------------
 
 // global -------------------
@@ -88,7 +104,12 @@ public:
     sim_pdf(static_cast<RooSimultaneous*>(ws->obj("mc_sim_pdf_bin0"))),
     rcat(static_cast<RooCategory*>(ws->obj("mc_sample"))),
     myy(static_cast<RooRealVar*>(ws->var("m_yy")))
-  { }
+  {
+    for (const auto& range : new_ws_ranges)
+      ws->var(range.first.c_str())
+        ->setRange(range.second.first,range.second.second);
+      // "mean_offset_bin0" -1.5, 1.
+  }
   
   ~workspace() {
     delete myy;
@@ -145,7 +166,8 @@ public:
 
 void make_hist(TH1*& hist, const char* name, const string& proc,
                double scale, const char* branch) {
-  const string cmd1(cat(branch,"/1000>>hist(",nbins,",105,160)"));
+  const string cmd1(cat(
+    branch,"/1000>>hist(",nbins,",",xrange.first,",",xrange.second,")"));
   const string cmd2(
     "HGamEventInfoAuxDyn.crossSectionBRfilterEff"
     "*HGamEventInfoAuxDyn.weight"
@@ -247,11 +269,16 @@ int main(int argc, char** argv)
        "ROOT file with RooWorkspace for CB fits")
       ("stats,s", po::bool_switch(&print_stats),
        "print interesting values for histograms")
+      ("xrange,x", po::value(&xrange)->default_value({105,160},"105:160"),
+       "histograms\' X range")
       ("nbins,n", po::value(&nbins)->default_value(100),
        "histograms\' number of bins")
       ("colors", po::value(&colors)->multitoken()->
         default_value(decltype(colors)({602,46}), "{602,46}"),
        "histograms\' colors")
+
+      ("ws-setRange", po::value(&new_ws_ranges),
+       "call RooWorkspace::setRange()")
     ;
 
     po::positional_options_description pos;
