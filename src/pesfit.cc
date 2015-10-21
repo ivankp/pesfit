@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <string>
 #include <vector>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <initializer_list>
@@ -18,6 +19,14 @@
 #include <TFitResultPtr.h>
 #include <TCanvas.h>
 #include <TLatex.h>
+
+#include <RooWorkspace.h>
+#include <RooRealVar.h>
+#include <RooSimultaneous.h>
+#include <RooCategory.h>
+#include <RooDataHist.h>
+#include <RooFitResult.h>
+#include <RooPlot.h>
 
 #include "catstr.hh"
 #include "senum.hh"
@@ -51,7 +60,7 @@ inline T* get(TDirectory* d, const char* name) {
 senum(Fit,(none)(gaus)(cb))
 Fit::type fit;
 
-string ofname, cfname;
+string ofname, cfname, wfname;
 vector<string> ifname;
 vector<Color_t> colors;
 Int_t nbins;
@@ -64,6 +73,75 @@ TTree *tree;
 TCanvas *canv;
 TLatex *lbl;
 // --------------------------
+
+class workspace {
+  TFile *file;
+  RooWorkspace *ws;
+  RooSimultaneous *sim_pdf;
+  RooCategory *rcat;
+  RooRealVar *myy;
+
+public:
+  workspace(const string& fname)
+  : file(new TFile(fname.c_str(),"read")),
+    ws(get<RooWorkspace>(file,"mcfit")),
+    sim_pdf(static_cast<RooSimultaneous*>(ws->obj("mc_sim_pdf_bin0"))),
+    rcat(static_cast<RooCategory*>(ws->obj("mc_sample"))),
+    myy(static_cast<RooRealVar*>(ws->var("m_yy")))
+  { }
+  
+  ~workspace() {
+    delete myy;
+    delete rcat;
+    delete sim_pdf;
+    delete file;
+  }
+  
+  unique_ptr<RooFitResult> fit(TH1* hist) const {
+    // Produce a RooDataHist object from the TH1
+    RooDataHist *rdh = new RooDataHist(
+      "mc_dh","mc_dh",RooArgSet(*myy),hist);
+    
+    // This map might look a bit useless,
+    // but the PDF is designed to fit several datasets simultaneously.
+    // This is done by assigning the PDF categories,
+    // here we only have one histogram
+    map<string,RooDataHist*> rdhmap;
+    rdhmap["mc_125"] = rdh;
+
+    // With the map we can build one combined dataset
+    // that has the proper link of the category information.
+    RooDataHist crdh("c_mc_dh","c_mc_dh",
+      RooArgSet(*myy), RooFit::Index(*rcat), RooFit::Import(rdhmap));
+
+    // Now we are ready to fit! We have a PDF and a RooDataHist
+    RooFitResult *res = sim_pdf->fitTo(crdh,
+      RooFit::Extended(false),
+      RooFit::InitialHesse(true),
+      RooFit::SumW2Error(true),
+      RooFit::Save(true),
+      RooFit::NumCPU(4),
+      RooFit::Minimizer("Minuit2"),
+      RooFit::Offset(true),
+      RooFit::Strategy(2)
+    );
+    
+    RooPlot *frame = myy->frame();
+    crdh.plotOn(frame,
+      RooFit::LineColor(12), 
+      RooFit::Cut("mc_sample == mc_sample::mc_125")
+    );
+    sim_pdf->plotOn(frame,
+      RooFit::LineColor(85),
+      RooFit::Slice(*rcat, "mc_125"),
+      RooFit::ProjWData(RooArgSet(*rcat), crdh)
+    );
+    frame->Draw("same");
+    
+    delete rdh;
+    return unique_ptr<RooFitResult>(res);
+  }
+};
 
 void make_hist(TH1*& hist, const char* name, const string& proc,
                double scale, const char* branch) {
@@ -89,13 +167,6 @@ void make_hist(TH1*& hist, const char* name, const string& proc,
 void draw(const initializer_list<TH1*>& hs) {
   int i=0;
   Color_t color;
-  vector<unique_ptr<TLatex>> lblp;
-  lblp.reserve(15);
-  auto latex = [&lblp](TLatex* lbl, Double_t x, Double_t y, const string& text) {
-    auto *p = lbl->DrawLatex(x,y,text.c_str());
-    lblp.emplace_back(p);
-    return p;
-  };
   for (auto it=hs.begin(), end=hs.end(); it!=end; ++it) {
     TH1 *hist = *it;
     const char *name = hist->GetName();
@@ -110,9 +181,9 @@ void draw(const initializer_list<TH1*>& hs) {
       hist->SetYTitle("d#sigma/dm_{#gamma#gamma} [fb/GeV]");
       hist->SetTitleOffset(1.3,"Y");
       hist->Draw();
-      latex(lbl,.67,0.88-0.04*i,"Entries");
-      latex(lbl,.77,0.88-0.04*i,"mean");
-      latex(lbl,.87,0.88-0.04*i,"stdev");
+      lbl->DrawLatex(.67,0.88-0.04*i,"Entries");
+      lbl->DrawLatex(.77,0.88-0.04*i,"mean");
+      lbl->DrawLatex(.87,0.88-0.04*i,"stdev");
     } else hist->Draw("same");
 
     Double_t mean  = hist->GetMean(),
@@ -123,7 +194,7 @@ void draw(const initializer_list<TH1*>& hs) {
     stats[name]["hist_stdev"] = stdev;
     stats[name]["hist_stdev_err"] = hist->GetStdDevError();
 
-    switch (fit) {
+    switch (fit) { // FITTING +++++++++++++++++++++++++++++++++++++++
       case Fit::none: break;
 
       case Fit::gaus: {
@@ -135,20 +206,22 @@ void draw(const initializer_list<TH1*>& hs) {
         stats[name]["gaus_mean_err"] = fr->Error(1);
         stats[name]["gaus_stdev"] = stdev;
         stats[name]["gaus_stdev_err"] = fr->Error(2);
-        break; }
+      break; }
 
       case Fit::cb: {
-        cerr << "cb fit not implemented yet" << endl;
-        break; }
+        cout << "\033[32mFitting " << name << "\033[0m" << endl;
+        static workspace ws(wfname);
+        ws.fit(hist)->Print("v");
+      break; }
     }
 
-    auto lblp = latex(lbl,.52,0.84-0.04*i,hist->GetName());
+    auto lblp = lbl->DrawLatex(.52,0.84-0.04*i,hist->GetName());
     lblp->SetTextColor(color);
-    latex(lblp,.67,0.84-0.04*i,cat(hist->GetEntries()));
-    latex(lblp,.77,0.84-0.04*i,
-      cat(fixed,setprecision(2),mean));
-    latex(lblp,.87,0.84-0.04*i,
-      cat(fixed,setprecision(2),stdev));
+    lblp->DrawLatex(.67,0.84-0.04*i,cat(hist->GetEntries()).c_str());
+    lblp->DrawLatex(.77,0.84-0.04*i,
+      cat(fixed,setprecision(2),mean).c_str());
+    lblp->DrawLatex(.87,0.84-0.04*i,
+      cat(fixed,setprecision(2),stdev).c_str());
   }
   canv->SaveAs(ofname.c_str());
 }
@@ -170,6 +243,8 @@ int main(int argc, char** argv)
        "logarithmic Y axis")
       ("fit,f", po::value(&fit)->default_value(Fit::none),
        cat("fit type: ",Fit::_str_all()).c_str())
+      ("workspace,w", po::value(&wfname)->default_value("data/ws.root"),
+       "ROOT file with RooWorkspace for CB fits")
       ("stats,s", po::bool_switch(&print_stats),
        "print interesting values for histograms")
       ("nbins,n", po::value(&nbins)->default_value(100),
@@ -243,6 +318,7 @@ int main(int argc, char** argv)
 
     delete file;
   }
+  cout << endl;
 
   // ---------------------------------------
 
