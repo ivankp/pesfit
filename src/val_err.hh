@@ -7,6 +7,15 @@
 #include <iomanip>
 #include <utility>
 
+// number of precision digits
+int err_prec(double err, int n=2) noexcept {
+  const double log_err = std::log10(err);
+  if (log_err < -8) return 0;
+  else if (log_err < 0) return n - log_err;
+  else if (log_err < n-1) return n-1;
+  else return 0;
+}
+
 template<typename V> struct val_err {
 private:
   template<typename T> inline T sq(T x) noexcept { return x*x; }
@@ -70,13 +79,8 @@ public:
 
   // Print
   std::ostream& print(std::ostream& out, const char* pm=" ± ") const {
-    double log_err = std::log10(err);
-    int prec;
-    if (log_err < -8) prec = 0;
-    else if (log_err < 0) prec = 2 - log_err;
-    else if (log_err < 1) prec = 1;
-    else prec = 0;
-    auto flags = out.flags();
+    const int prec = err_prec(err);
+    const auto flags = out.flags();
     out << std::fixed << std::setprecision(prec) << val << pm
         << std::setprecision(prec) << err;
     out.flags(flags);

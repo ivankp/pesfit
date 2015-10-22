@@ -98,7 +98,8 @@ vector<string> ifname;
 vector<Color_t> colors;
 Int_t nbins;
 pair<double,double> xrange;
-bool summary, logy;
+bool logy;
+int prec;
 vector<pair<string,pair<double,double>>> new_ws_ranges;
 // --------------------------
 
@@ -233,12 +234,10 @@ void draw(const initializer_list<TH1*>& hs) {
     Double_t mean  = hist->GetMean(),
              stdev = hist->GetStdDev();
 
-    if (summary) {
-      auto &hstat = stats[name];
-      hstat["hist_N"] = hist->GetEntries();
-      hstat["hist_mean"] = {mean,hist->GetMeanError()};
-      hstat["hist_stdev"] = {stdev,hist->GetStdDevError()};
-    }
+    auto &hstat = stats[name];
+    hstat["hist_N"] = hist->GetEntries();
+    hstat["hist_mean"] = {mean,hist->GetMeanError()};
+    hstat["hist_stdev"] = {stdev,hist->GetStdDevError()};
 
     switch (fit) { // FITTING +++++++++++++++++++++++++++++++++++++++
       case Fit::none: break;
@@ -248,11 +247,9 @@ void draw(const initializer_list<TH1*>& hs) {
         mean  = fit_res->Value(1);
         stdev = fit_res->Value(2);
 
-        if (summary) {
-          auto &hstat = stats[name];
-          hstat["gaus_mean"] = {mean,fit_res->Error(1)};
-          hstat["gaus_stdev"] = {stdev,fit_res->Error(2)};
-        }
+        auto &hstat = stats[name];
+        hstat["gaus_mean"] = {mean,fit_res->Error(1)};
+        hstat["gaus_stdev"] = {stdev,fit_res->Error(2)};
       break; }
 
       case Fit::cb: {
@@ -260,36 +257,34 @@ void draw(const initializer_list<TH1*>& hs) {
         static workspace ws(wfname);
         auto fit_res = ws.fit(hist);
         
-        if (summary) {
-          auto &hstat = stats[name];
-          for (const string& varname : {
-            "crys_alpha_bin0", "crys_norm_bin0", "fcb_bin0", "gaus_kappa_bin0",
-            "gaus_mean_offset_bin0", "mean_offset_bin0", "sigma_offset_bin0"
-          }) {
-            auto *var = static_cast<RooRealVar*>(
-              fit_res->floatParsFinal().find(varname.c_str()));
-            hstat[varname] = {var->getVal(),var->getError()};
-          }
-/*
-          auto Nsig = static_cast<RooRealVar*>(
-            fit_res->floatParsFinal().find("NSig_bin0")
-          );
-          const double Nsig_rat = Nsig->getVal()/Nsig->getError();
-          hstat["p0"] = Nsig_rat > 0 ? 
-                        0.5*TMath::Prob( sq(Nsig_rat) , 1.) :
-                        1 - 0.5*TMath::Prob( sq(Nsig_rat) , 1.);
-*/
+        auto &hstat = stats[name];
+        for (const string& varname : {
+          "crys_alpha_bin0", "crys_norm_bin0", "fcb_bin0", "gaus_kappa_bin0",
+          "gaus_mean_offset_bin0", "mean_offset_bin0", "sigma_offset_bin0"
+        }) {
+          auto *var = static_cast<RooRealVar*>(
+            fit_res->floatParsFinal().find(varname.c_str()));
+          hstat[varname] = {var->getVal(),var->getError()};
         }
+/*
+        auto Nsig = static_cast<RooRealVar*>(
+          fit_res->floatParsFinal().find("NSig_bin0")
+        );
+        const double Nsig_rat = Nsig->getVal()/Nsig->getError();
+        hstat["p0"] = Nsig_rat > 0 ? 
+                      0.5*TMath::Prob( sq(Nsig_rat) , 1.) :
+                      1 - 0.5*TMath::Prob( sq(Nsig_rat) , 1.);
+*/
       break; }
     }
 
     auto lblp = lbl->DrawLatex(.12,0.84-0.04*i,hist->GetName());
     lblp->SetTextColor(color);
-    lblp->DrawLatex(.24,0.84-0.04*i,cat(hist->GetEntries()).c_str());
+    lblp->DrawLatex(.24,0.84-0.04*i,ccat(hist->GetEntries()));
     lblp->DrawLatex(.32,0.84-0.04*i,
-      cat(fixed,setprecision(2),mean).c_str());
+      ccat(fixed,setprecision(2),mean));
     lblp->DrawLatex(.40,0.84-0.04*i,
-      cat(fixed,setprecision(2),stdev).c_str());
+      ccat(fixed,setprecision(2),stdev));
   }
   canv->SaveAs(ofname.c_str());
 }
@@ -310,15 +305,15 @@ int main(int argc, char** argv)
       ("logy,l", po::bool_switch(&logy),
        "logarithmic Y axis")
       ("fit,f", po::value(&fit)->default_value(Fit::none),
-       cat("fit type: ",Fit::_str_all()).c_str())
+       ccat("fit type: ",Fit::_str_all()))
       ("workspace,w", po::value(&wfname)->default_value("data/ws.root"),
        "ROOT file with RooWorkspace for CB fits")
-      ("summary,s", po::bool_switch(&summary),
-       "print interesting values for histograms")
       ("xrange,x", po::value(&xrange)->default_value({105,140},"105:140"),
        "histograms\' X range")
       ("nbins,n", po::value(&nbins)->default_value(100),
        "histograms\' number of bins")
+      ("prec", po::value(&prec)->default_value(-1),
+       "summary table precision, -1 prints uncertainty")
       ("colors", po::value(&colors)->multitoken()->
         default_value(decltype(colors)({602,46}), "{602,46}"),
        "histograms\' colors")
@@ -408,10 +403,10 @@ int main(int argc, char** argv)
   draw({nom});
   draw({scale_down,scale_up});
   draw({res_down,res_up});
-  
-  canv->Clear();
-  
-  if (summary) {
+
+  // Print summary page *********************************************
+  {
+    canv->Clear();
     vector<unique_ptr<TPaveText>> txt;
     int i, n=6;
     txt.reserve(n);
@@ -436,7 +431,8 @@ int main(int argc, char** argv)
         } else if (var.first.substr(var.first.rfind('_')+1)=="N") {
           ss << fixed << setprecision(0) << var.second.val;
         } else {
-          var.second.print(ss," #pm ");
+          if (prec==-1) var.second.print(ss," #pm ");
+          else ss << scientific << setprecision(prec) << var.second.val;
         }
         txt[i]->AddText(ss.str().c_str());
       }
@@ -448,6 +444,60 @@ int main(int argc, char** argv)
       if (i) line->DrawLineNDC(float(i)/n,0.,float(i)/n,1.);
     }
     for (i=1; i<m; ++i) line->DrawLineNDC(0.,float(i)/m,1.,float(i)/m);
+    canv->SaveAs(ofname.c_str());
+  }
+  // ****************************************************************
+  
+  if (fit==Fit::cb) {
+    canv->Clear();
+    double scale      = stats["nominal"   ]["mean_offset_bin0"].val;
+    double scale_down = stats["scale_down"]["mean_offset_bin0"].val;
+    double scale_up   = stats["scale_up"  ]["mean_offset_bin0"].val;
+           scale_down = scale_down - scale;
+           scale_up   = scale_up   - scale;
+    double scale_sym  = (scale_up-scale_down)/2;
+
+    double res        = stats["nominal"   ]["sigma_offset_bin0"].val;
+    double res_down   = stats["res_down"  ]["sigma_offset_bin0"].val;
+    double res_up     = stats["res_up"    ]["sigma_offset_bin0"].val;
+           res_down   = res_down - res;
+           res_up     = res_up   - res;
+    double res_sym    = (res_up-res_down)/2;
+
+    int scale_prec = err_prec(scale_sym,3);
+    int   res_prec = err_prec(res_sym,3);
+
+    vector<unique_ptr<TPaveText>> txt;
+    txt.reserve(3);
+    for (int i=0; i<3; ++i) {
+      TPaveText *pt;
+      txt.emplace_back(pt = new TPaveText(i/3.,0.,(i+1)/3.,1.,"NBNDC"));
+      pt->SetFillColor(0);
+    }
+
+    txt[0]->AddText("");
+    txt[1]->AddText("Scale");
+    txt[2]->AddText("Resolution");
+
+    txt[0]->AddText("Value");
+    txt[1]->AddText(ccat(fixed,setprecision(scale_prec),scale));
+    txt[2]->AddText(ccat(fixed,setprecision(res_prec),res));
+
+    txt[0]->AddText("Uncertainty");
+    txt[1]->AddText(ccat(fixed,setprecision(scale_prec),scale_down,", ",scale_up));
+    txt[2]->AddText(ccat(fixed,setprecision(res_prec),res_down,", ",res_up));
+
+
+    txt[0]->AddText("Symmetric Uncertainty");
+    txt[1]->AddText(ccat(fixed,setprecision(scale_prec),scale_sym));
+    txt[2]->AddText(ccat(fixed,setprecision(res_prec),res_sym));
+    
+    TLine *line = new TLine();
+    for (int i=0; i<3; ++i) {
+      txt[i]->Draw();
+      if (i) line->DrawLineNDC(i/3.,0.,i/3.,1.);
+    }
+    for (int i=1; i<4; ++i) line->DrawLineNDC(0.,i/4.,1.,i/4.);
     canv->SaveAs(ofname.c_str());
   }
 
