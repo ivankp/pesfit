@@ -1,5 +1,6 @@
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <map>
@@ -53,6 +54,12 @@ namespace std {
   }
 }
 
+void repall(string& str, const string& s1, const string& s2) noexcept {
+  size_t pos;
+  while ((pos=str.find(s1))!=string::npos)
+    str.replace(pos,s1.size(),s2);
+}
+
 template<typename T>
 inline T* get(TDirectory* d, const char* name) {
   TObject *obj = d->Get(name);
@@ -79,7 +86,7 @@ vector<string> ifname;
 vector<Color_t> colors;
 Int_t nbins;
 pair<double,double> xrange;
-bool print_stats, logy;
+bool summary, logy;
 vector<pair<string,pair<double,double>>> new_ws_ranges;
 // --------------------------
 
@@ -203,18 +210,20 @@ void draw(const initializer_list<TH1*>& hs) {
       hist->SetYTitle("d#sigma/dm_{#gamma#gamma} [fb/GeV]");
       hist->SetTitleOffset(1.3,"Y");
       hist->Draw();
-      lbl->DrawLatex(.67,0.88-0.04*i,"Entries");
-      lbl->DrawLatex(.77,0.88-0.04*i,"mean");
-      lbl->DrawLatex(.87,0.88-0.04*i,"stdev");
+      lbl->DrawLatex(.24,0.88-0.04*i,"Entries");
+      lbl->DrawLatex(.32,0.88-0.04*i,"mean");
+      lbl->DrawLatex(.40,0.88-0.04*i,"stdev");
     } else hist->Draw("same");
 
     Double_t mean  = hist->GetMean(),
              stdev = hist->GetStdDev();
 
-    stats[name]["hist_mean"] = mean;
-    stats[name]["hist_mean_err"] = hist->GetMeanError();
-    stats[name]["hist_stdev"] = stdev;
-    stats[name]["hist_stdev_err"] = hist->GetStdDevError();
+    if (summary) {
+      stats[name]["hist_mean"] = mean;
+      stats[name]["hist_mean_err"] = hist->GetMeanError();
+      stats[name]["hist_stdev"] = stdev;
+      stats[name]["hist_stdev_err"] = hist->GetStdDevError();
+    }
 
     switch (fit) { // FITTING +++++++++++++++++++++++++++++++++++++++
       case Fit::none: break;
@@ -224,25 +233,38 @@ void draw(const initializer_list<TH1*>& hs) {
         mean  = fr->Value(1);
         stdev = fr->Value(2);
 
-        stats[name]["gaus_mean"] = mean;
-        stats[name]["gaus_mean_err"] = fr->Error(1);
-        stats[name]["gaus_stdev"] = stdev;
-        stats[name]["gaus_stdev_err"] = fr->Error(2);
+        if (summary) {
+          stats[name]["gaus_mean"] = mean;
+          stats[name]["gaus_mean_err"] = fr->Error(1);
+          stats[name]["gaus_stdev"] = stdev;
+          stats[name]["gaus_stdev_err"] = fr->Error(2);
+        }
       break; }
 
       case Fit::cb: {
         cout << "\033[32mFitting " << name << "\033[0m" << endl;
         static workspace ws(wfname);
-        ws.fit(hist)->Print("v");
+        
+        if (summary) {
+        
+        } else {
+          stringstream ss;
+          auto &prt_stream = RooFitResult::defaultPrintStream(&ss);
+          ws.fit(hist)->Print("v");
+          RooFitResult::defaultPrintStream(&prt_stream);
+          string str = ss.str();
+          repall(str,"+/-","±");
+          test(str)
+        }
       break; }
     }
 
-    auto lblp = lbl->DrawLatex(.52,0.84-0.04*i,hist->GetName());
+    auto lblp = lbl->DrawLatex(.12,0.84-0.04*i,hist->GetName());
     lblp->SetTextColor(color);
-    lblp->DrawLatex(.67,0.84-0.04*i,cat(hist->GetEntries()).c_str());
-    lblp->DrawLatex(.77,0.84-0.04*i,
+    lblp->DrawLatex(.24,0.84-0.04*i,cat(hist->GetEntries()).c_str());
+    lblp->DrawLatex(.32,0.84-0.04*i,
       cat(fixed,setprecision(2),mean).c_str());
-    lblp->DrawLatex(.87,0.84-0.04*i,
+    lblp->DrawLatex(.40,0.84-0.04*i,
       cat(fixed,setprecision(2),stdev).c_str());
   }
   canv->SaveAs(ofname.c_str());
@@ -267,9 +289,9 @@ int main(int argc, char** argv)
        cat("fit type: ",Fit::_str_all()).c_str())
       ("workspace,w", po::value(&wfname)->default_value("data/ws.root"),
        "ROOT file with RooWorkspace for CB fits")
-      ("stats,s", po::bool_switch(&print_stats),
+      ("summary,s", po::bool_switch(&summary),
        "print interesting values for histograms")
-      ("xrange,x", po::value(&xrange)->default_value({105,160},"105:160"),
+      ("xrange,x", po::value(&xrange)->default_value({105,140},"105:140"),
        "histograms\' X range")
       ("nbins,n", po::value(&nbins)->default_value(100),
        "histograms\' number of bins")
@@ -356,7 +378,7 @@ int main(int argc, char** argv)
 
   lbl = new TLatex();
   lbl->SetTextFont(43);
-  lbl->SetTextSize(20);
+  lbl->SetTextSize(15);
   lbl->SetNDC();
 
   draw({nom});
@@ -367,7 +389,7 @@ int main(int argc, char** argv)
   delete canv;
   delete lbl;
   
-  if (print_stats) {
+  if (summary) {
     for (auto& stat : stats) {
       cout << endl << stat.first << endl;
       for (auto& var : stat.second) {
