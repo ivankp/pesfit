@@ -1,10 +1,11 @@
+// Developed by Ivan Pogrebnyak, MSU
+
 #include <iostream>
 #include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
 #include <map>
-#include <unordered_map>
 #include <unordered_set>
 #include <initializer_list>
 #include <memory>
@@ -20,6 +21,9 @@
 #include <TFitResultPtr.h>
 #include <TCanvas.h>
 #include <TLatex.h>
+#include <TPaveText.h>
+#include <TLine.h>
+#include <TMath.h>
 
 #include <RooWorkspace.h>
 #include <RooRealVar.h>
@@ -31,15 +35,16 @@
 
 #include "catstr.hh"
 #include "senum.hh"
+#include "val_err.hh"
 
 using namespace std;
 namespace po = boost::program_options;
 
-template<typename T> using usmap = unordered_map<string,T>;
-
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
-  
+
+template<typename T> inline T sq(T x) noexcept { return x*x; }
+
 namespace std {
   template <typename T1, typename T2>
   istream& operator>>(istream& in, pair<T1,T2>& p) {
@@ -54,11 +59,18 @@ namespace std {
   }
 }
 
-void repall(string& str, const string& s1, const string& s2) noexcept {
-  size_t pos;
-  while ((pos=str.find(s1))!=string::npos)
-    str.replace(pos,s1.size(),s2);
-}
+template<typename T, typename Key=std::string>
+class seqmap: public std::vector<std::pair<Key,T>> {
+public:
+  T& operator[](const Key& key) {
+    auto it = std::find_if(this->begin(),this->end(),
+      [&key](const std::pair<Key,T>& p){ return p.first==key; });
+    if (it==this->end()) {
+      this->emplace_back(key,T());
+      return this->back().second;
+    } else return it->second;
+  }
+};
 
 template<typename T>
 inline T* get(TDirectory* d, const char* name) {
@@ -91,7 +103,7 @@ vector<pair<string,pair<double,double>>> new_ws_ranges;
 // --------------------------
 
 // global -------------------
-usmap<usmap<double>> stats;
+seqmap<seqmap<val_err<double>>> stats;
 TTree *tree;
 TCanvas *canv;
 TLatex *lbl;
@@ -124,6 +136,8 @@ public:
     delete sim_pdf;
     delete file;
   }
+  
+  // inline RooWorkspace* operator->() noexcept { return ws; }
   
   unique_ptr<RooFitResult> fit(TH1* hist) const {
     // Produce a RooDataHist object from the TH1
@@ -165,6 +179,7 @@ public:
       RooFit::ProjWData(RooArgSet(*rcat), crdh)
     );
     frame->Draw("same");
+    res->Print("v");
     
     delete rdh;
     return unique_ptr<RooFitResult>(res);
@@ -219,42 +234,51 @@ void draw(const initializer_list<TH1*>& hs) {
              stdev = hist->GetStdDev();
 
     if (summary) {
-      stats[name]["hist_mean"] = mean;
-      stats[name]["hist_mean_err"] = hist->GetMeanError();
-      stats[name]["hist_stdev"] = stdev;
-      stats[name]["hist_stdev_err"] = hist->GetStdDevError();
+      auto &hstat = stats[name];
+      hstat["hist_N"] = hist->GetEntries();
+      hstat["hist_mean"] = {mean,hist->GetMeanError()};
+      hstat["hist_stdev"] = {stdev,hist->GetStdDevError()};
     }
 
     switch (fit) { // FITTING +++++++++++++++++++++++++++++++++++++++
       case Fit::none: break;
 
       case Fit::gaus: {
-        auto fr = hist->Fit("gaus","S");
-        mean  = fr->Value(1);
-        stdev = fr->Value(2);
+        auto fit_res = hist->Fit("gaus","S");
+        mean  = fit_res->Value(1);
+        stdev = fit_res->Value(2);
 
         if (summary) {
-          stats[name]["gaus_mean"] = mean;
-          stats[name]["gaus_mean_err"] = fr->Error(1);
-          stats[name]["gaus_stdev"] = stdev;
-          stats[name]["gaus_stdev_err"] = fr->Error(2);
+          auto &hstat = stats[name];
+          hstat["gaus_mean"] = {mean,fit_res->Error(1)};
+          hstat["gaus_stdev"] = {stdev,fit_res->Error(2)};
         }
       break; }
 
       case Fit::cb: {
         cout << "\033[32mFitting " << name << "\033[0m" << endl;
         static workspace ws(wfname);
+        auto fit_res = ws.fit(hist);
         
         if (summary) {
-        
-        } else {
-          stringstream ss;
-          auto &prt_stream = RooFitResult::defaultPrintStream(&ss);
-          ws.fit(hist)->Print("v");
-          RooFitResult::defaultPrintStream(&prt_stream);
-          string str = ss.str();
-          repall(str,"+/-","±");
-          test(str)
+          auto &hstat = stats[name];
+          for (const string& varname : {
+            "crys_alpha_bin0", "crys_norm_bin0", "fcb_bin0", "gaus_kappa_bin0",
+            "gaus_mean_offset_bin0", "mean_offset_bin0", "sigma_offset_bin0"
+          }) {
+            auto *var = static_cast<RooRealVar*>(
+              fit_res->floatParsFinal().find(varname.c_str()));
+            hstat[varname] = {var->getVal(),var->getError()};
+          }
+/*
+          auto Nsig = static_cast<RooRealVar*>(
+            fit_res->floatParsFinal().find("NSig_bin0")
+          );
+          const double Nsig_rat = Nsig->getVal()/Nsig->getError();
+          hstat["p0"] = Nsig_rat > 0 ? 
+                        0.5*TMath::Prob( sq(Nsig_rat) , 1.) :
+                        1 - 0.5*TMath::Prob( sq(Nsig_rat) , 1.);
+*/
         }
       break; }
     }
@@ -384,19 +408,52 @@ int main(int argc, char** argv)
   draw({nom});
   draw({scale_down,scale_up});
   draw({res_down,res_up});
+  
+  canv->Clear();
+  
+  if (summary) {
+    vector<unique_ptr<TPaveText>> txt;
+    int i, n=6;
+    txt.reserve(n);
+    for (i=0; i<n; ++i) {
+      TPaveText *pt;
+      txt.emplace_back(pt = new TPaveText(float(i)/n,0.,float(i+1)/n,1.,"NBNDC"));
+      pt->SetFillColor(0);
+    }
+    i=1;
+    int m = 1;
+    txt[0]->AddText("");
+    for (auto& hist : stats) {
+      txt[i]->AddText(hist.first.c_str());
+      for (auto& var : hist.second) {
+        if (i==1) {
+          txt[0]->AddText(var.first.c_str());
+          ++m;
+        }
+        stringstream ss;
+        if (var.first.substr(0,var.first.find('_'))=="xsec") {
+          ss << setprecision(3) << var.second.val;
+        } else if (var.first.substr(var.first.rfind('_')+1)=="N") {
+          ss << fixed << setprecision(0) << var.second.val;
+        } else {
+          var.second.print(ss," #pm ");
+        }
+        txt[i]->AddText(ss.str().c_str());
+      }
+      ++i;
+    }
+    TLine *line = new TLine();
+    for (i=0; i<n; ++i) {
+      txt[i]->Draw();
+      if (i) line->DrawLineNDC(float(i)/n,0.,float(i)/n,1.);
+    }
+    for (i=1; i<m; ++i) line->DrawLineNDC(0.,float(i)/m,1.,float(i)/m);
+    canv->SaveAs(ofname.c_str());
+  }
 
   canv->SaveAs((ofname+']').c_str());
   delete canv;
   delete lbl;
-  
-  if (summary) {
-    for (auto& stat : stats) {
-      cout << endl << stat.first << endl;
-      for (auto& var : stat.second) {
-        cout <<"  "<< var.first <<" = "<< var.second << endl;
-      }
-    }
-  }
 
   return 0;
 }
