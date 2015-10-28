@@ -25,9 +25,4 @@ inline std::string cat(TT&&... tt) {
   return ss.str();
 }
 
-template<typename... TT>
-inline const char* ccat(TT&&... tt) {
-  return cat(std::forward<TT>(tt)...).c_str();
-}
-
 #endif

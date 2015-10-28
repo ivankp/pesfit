@@ -38,8 +38,23 @@
 #include "catstr.hh"
 #include "senum.hh"
 #include "val_err.hh"
+#include "TGraph_fcns.hh"
 
-using namespace std;
+using std::cout;
+using std::cerr;
+using std::endl;
+using std::string;
+using std::pair;
+using std::vector;
+using std::map;
+using std::unordered_set;
+using std::initializer_list;
+using std::unique_ptr;
+using std::runtime_error;
+using std::stringstream;
+using std::scientific;
+using std::setprecision;
+using std::fixed;
 namespace po = boost::program_options;
 
 #define test(var) \
@@ -100,7 +115,7 @@ vector<string> ifname;
 vector<Color_t> colors;
 Int_t nbins;
 pair<double,double> xrange;
-bool logy;
+bool logy, fix_alpha;
 int prec;
 vector<pair<string,pair<double,double>>> new_ws_ranges;
 // --------------------------
@@ -127,11 +142,16 @@ public:
     rcat(static_cast<RooCategory*>(ws->obj("mc_sample"))),
     myy(static_cast<RooRealVar*>(ws->var("m_yy")))
   {
+    test("Called ws constructor **********************************")
     for (const auto& range : new_ws_ranges)
       ws->var(range.first.c_str())
         ->setRange(range.second.first,range.second.second);
       // "mean_offset_bin0" -1.5, 1.
   }
+  
+  /*workspace()
+  : file(nullptr), ws(nullptr), sim_pdf(nullptr), rcat(nullptr), myy(nullptr)
+  { }*/
   
   ~workspace() {
     delete myy;
@@ -140,9 +160,9 @@ public:
     delete file;
   }
   
-  // inline RooWorkspace* operator->() noexcept { return ws; }
+  inline RooWorkspace* operator->() noexcept { return ws; }
   
-  pair<unique_ptr<RooFitResult>,TH1*> fit(TH1* hist) const {
+  pair<unique_ptr<RooFitResult>,RooCurve*> fit(TH1* hist) const {
     // Produce a RooDataHist object from the TH1
     RooDataHist *rdh = new RooDataHist(
       "mc_dh","mc_dh",RooArgSet(*myy),hist);
@@ -171,7 +191,6 @@ public:
       RooFit::Strategy(2)
     );
     
-/*
     RooPlot *frame = myy->frame();
     crdh.plotOn(frame,
       RooFit::LineColor(12), 
@@ -186,12 +205,9 @@ public:
     //frame->Draw("same");
     curve->Draw("same");
     res->Print("v");
-*/
+
     delete rdh;
-    return {
-      unique_ptr<RooFitResult>(res),
-      static_cast<TH1*>(sim_pdf->createHistogram("m_yy",10000))
-    };
+    return {unique_ptr<RooFitResult>(res),curve};
   }
 };
   
@@ -199,6 +215,10 @@ inline Double_t get_FWHM(const TH1* hist) noexcept {
   const Double_t half_max = hist->GetMaximum()/2;
   return hist->GetBinCenter(hist->FindLastBinAbove(half_max))
        - hist->GetBinCenter(hist->FindFirstBinAbove(half_max));
+}
+inline Double_t get_FWHM(const TGraph* gr) noexcept {
+  const Double_t half_max = max(gr).second/2;
+  return rfindx(gr,half_max) - lfindx(gr,half_max);
 }
 
 void make_hist(TH1*& hist, const char* name, const string& proc,
@@ -282,10 +302,10 @@ void draw(const initializer_list<TH1*>& hs) {
         }
         hstat["FWHM"] = get_FWHM(fit_res.second);
         
-        fit_res.second->SetLineColor(41);
-        fit_res.second->SetMarkerColor(41);
-        fit_res.second->SetLineWidth(2);
-        fit_res.second->Draw("same");
+        if (fix_alpha) if (!strcmp(name,"nominal")) {
+          auto *alpha = ws->var("crys_alpha_bin0");
+          alpha->setRange(alpha->getVal(),alpha->getVal());
+        }
 
 /*
         auto Nsig = static_cast<RooRealVar*>(
@@ -301,11 +321,11 @@ void draw(const initializer_list<TH1*>& hs) {
 
     auto lblp = lbl->DrawLatex(.12,0.84-0.04*i,hist->GetName());
     lblp->SetTextColor(color);
-    lblp->DrawLatex(.24,0.84-0.04*i,ccat(hist->GetEntries()));
+    lblp->DrawLatex(.24,0.84-0.04*i,cat(hist->GetEntries()).c_str());
     lblp->DrawLatex(.32,0.84-0.04*i,
-      ccat(fixed,setprecision(2),mean));
+      cat(fixed,setprecision(2),mean).c_str());
     lblp->DrawLatex(.40,0.84-0.04*i,
-      ccat(fixed,setprecision(2),stdev));
+      cat(fixed,setprecision(2),stdev).c_str());
   }
   canv->SaveAs(ofname.c_str());
 }
@@ -326,9 +346,11 @@ int main(int argc, char** argv)
       ("logy,l", po::bool_switch(&logy),
        "logarithmic Y axis")
       ("fit,f", po::value(&fit)->default_value(Fit::none),
-       ccat("fit type: ",Fit::_str_all()))
+       cat("fit type: ",Fit::_str_all()).c_str())
       ("workspace,w", po::value(&wfname)->default_value("data/ws.root"),
        "ROOT file with RooWorkspace for CB fits")
+      ("fix-alpha", po::bool_switch(&fix_alpha),
+       "fix crys_alpha_bin0 parameter after nominal fit")
       ("xrange,x", po::value(&xrange)->default_value({105,140},"105:140"),
        "histograms\' X range")
       ("nbins,n", po::value(&nbins)->default_value(100),
@@ -358,7 +380,7 @@ int main(int argc, char** argv)
         vm["config"].as<string>().c_str(), desc), vm);
     }
     po::notify(vm);
-  } catch (exception& e) {
+  } catch (std::exception& e) {
     cerr << "\033[31mArgs: " <<  e.what() <<"\033[0m"<< endl;
     return 1;
   }
@@ -381,10 +403,10 @@ int main(int argc, char** argv)
     )->GetBinContent(3);
 
     // Regex for process identification
-    static regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
-                         regex_constants::icase);
-    smatch proc_match;
-    if (!regex_match(f, proc_match, proc_re))
+    static std::regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
+                              std::regex_constants::icase);
+    std::smatch proc_match;
+    if (!std::regex_match(f, proc_match, proc_re))
       throw runtime_error(cat("Filename \"",f,"\" does not specify process"));
     const string proc(proc_match.str(1));
 
@@ -408,7 +430,7 @@ int main(int argc, char** argv)
     delete file;
   }
   cout << endl;
-
+  
   // ---------------------------------------
 
   canv = new TCanvas();
@@ -485,40 +507,45 @@ int main(int argc, char** argv)
            res_up     = res_up   - res;
     double res_sym    = (res_up-res_down)/2;
 
-    int scale_prec = err_prec(scale_sym,3);
-    int   res_prec = err_prec(res_sym,3);
-
+    double fwhm       = stats["nominal"   ]["FWHM"].val;
+    double fwhm_down  = stats["res_down"  ]["FWHM"].val;
+    double fwhm_up    = stats["res_up"    ]["FWHM"].val;
+           fwhm_down  = fwhm_down - fwhm;
+           fwhm_up    = fwhm_up   - fwhm;
+    double fwhm_sym   = (fwhm_up-fwhm_down)/2;
+    
     vector<unique_ptr<TPaveText>> txt;
-    txt.reserve(3);
-    for (int i=0; i<3; ++i) {
+    txt.reserve(4);
+    for (int i=0; i<4; ++i) {
       TPaveText *pt;
-      txt.emplace_back(pt = new TPaveText(i/3.,0.,(i+1)/3.,1.,"NBNDC"));
+      txt.emplace_back(pt = new TPaveText(i/4.,0.,(i+1)/4.,1.,"NBNDC"));
       pt->SetFillColor(0);
     }
 
-    txt[0]->AddText("");
+    txt[0]->AddText("[GeV]");
     txt[1]->AddText("Scale");
     txt[2]->AddText("Resolution");
+    txt[3]->AddText("FWHM");
 
     txt[0]->AddText("Value");
-    txt[1]->AddText(ccat(fixed,setprecision(scale_prec),scale));
-    txt[2]->AddText(ccat(fixed,setprecision(res_prec),res));
+    txt[1]->AddText(Form("%.3f",scale));
+    txt[2]->AddText(Form("%.3f",res));
+    txt[3]->AddText(Form("%.3f",fwhm));
 
     txt[0]->AddText("Uncertainty");
-    txt[1]->AddText(ccat(fixed,setprecision(scale_prec),scale_down,
-                         ", +",scale_up));
-    txt[2]->AddText(ccat(fixed,setprecision(res_prec),res_down,
-                         ", +",res_up));
+    txt[1]->AddText(Form("%.3f, +%.3f",scale_down,scale_up));
+    txt[2]->AddText(Form("%.3f, +%.3f",res_down,res_up));
+    txt[3]->AddText(Form("%.3f, +%.3f",fwhm_down,fwhm_up));
 
+    txt[0]->AddText("Average Uncertainty");
+    txt[1]->AddText(Form("#pm %.3f",scale_sym));
+    txt[2]->AddText(Form("#pm %.3f",res_sym));
+    txt[3]->AddText(Form("#pm %.3f",fwhm_sym));
 
-    txt[0]->AddText("Symmetric Uncertainty");
-    txt[1]->AddText(ccat("#pm ",fixed,setprecision(scale_prec),scale_sym));
-    txt[2]->AddText(ccat("#pm ",fixed,setprecision(res_prec),res_sym));
-    
     TLine *line = new TLine();
-    for (int i=0; i<3; ++i) {
+    for (int i=0; i<4; ++i) {
       txt[i]->Draw();
-      if (i) line->DrawLineNDC(i/3.,0.,i/3.,1.);
+      if (i) line->DrawLineNDC(i/4.,0.,i/4.,1.);
     }
     for (int i=1; i<4; ++i) line->DrawLineNDC(0.,i/4.,1.,i/4.);
     canv->SaveAs(ofname.c_str());

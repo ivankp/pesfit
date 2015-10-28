@@ -1,7 +1,7 @@
 CC  := gcc
 CXX := g++
 
-CXXFLAGS := -std=c++11 -Wall -g
+CXXFLAGS := -std=c++11 -Wall -O3
 
 ROOT_CXXFLAGS := $(shell root-config --cflags)
 ROOT_LIBS     := $(shell root-config --libs) -lMinuit2 -lRooFitCore -lRooFit -lRooStats
@@ -30,12 +30,12 @@ endif
 
 # create dependencies
 $(BLDDIR)/%.d: $(SRCDIR)/%.cc
-	@echo DP $(notdir $@)
+	@echo DEP $(notdir $@)
 	@$(CXX) $(CXXFLAGS) -MM -MT '$(patsubst $(SRCDIR)/%.cc,$(BLDDIR)/%.o,$<)' $< -MF $@
 
 # compile objects
 $(BLDDIR)/%.o : $(SRCDIR)/%.cc
-	@echo CC $(notdir $@)
+	@echo CXX $(notdir $@)
 	@$(CXX) -c -I$(SRCDIR) $(CXXFLAGS) $(ROOT_CXXFLAGS) $< -o $@
 
 # link executables
@@ -54,4 +54,5 @@ $(BLDDIR) $(EXEDIR):
 clean:
 	@rm -vfr $(BLDDIR) $(EXEDIR)
 
-#$(EXEDIR)/play: $(BLDDIR)/node.o $(BLDDIR)/neuron.o $(BLDDIR)/network.o
+$(EXEDIR)/pesfit: $(BLDDIR)/TGraph_fcns.o
+
