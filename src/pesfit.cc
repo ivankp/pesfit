@@ -10,6 +10,7 @@
 #include <initializer_list>
 #include <memory>
 #include <regex>
+#include <stdexcept>
 
 #include <boost/program_options.hpp>
 
@@ -32,6 +33,7 @@
 #include <RooDataHist.h>
 #include <RooFitResult.h>
 #include <RooPlot.h>
+#include <RooCurve.h>
 
 #include "catstr.hh"
 #include "senum.hh"
@@ -140,7 +142,7 @@ public:
   
   // inline RooWorkspace* operator->() noexcept { return ws; }
   
-  unique_ptr<RooFitResult> fit(TH1* hist) const {
+  pair<unique_ptr<RooFitResult>,TH1*> fit(TH1* hist) const {
     // Produce a RooDataHist object from the TH1
     RooDataHist *rdh = new RooDataHist(
       "mc_dh","mc_dh",RooArgSet(*myy),hist);
@@ -169,6 +171,7 @@ public:
       RooFit::Strategy(2)
     );
     
+/*
     RooPlot *frame = myy->frame();
     crdh.plotOn(frame,
       RooFit::LineColor(12), 
@@ -179,13 +182,24 @@ public:
       RooFit::Slice(*rcat, "mc_125"),
       RooFit::ProjWData(RooArgSet(*rcat), crdh)
     );
-    frame->Draw("same");
+    auto *curve = frame->getCurve();
+    //frame->Draw("same");
+    curve->Draw("same");
     res->Print("v");
-    
+*/
     delete rdh;
-    return unique_ptr<RooFitResult>(res);
+    return {
+      unique_ptr<RooFitResult>(res),
+      static_cast<TH1*>(sim_pdf->createHistogram("m_yy",10000))
+    };
   }
 };
+  
+inline Double_t get_FWHM(const TH1* hist) noexcept {
+  const Double_t half_max = hist->GetMaximum()/2;
+  return hist->GetBinCenter(hist->FindLastBinAbove(half_max))
+       - hist->GetBinCenter(hist->FindFirstBinAbove(half_max));
+}
 
 void make_hist(TH1*& hist, const char* name, const string& proc,
                double scale, const char* branch) {
@@ -263,9 +277,16 @@ void draw(const initializer_list<TH1*>& hs) {
           "gaus_mean_offset_bin0", "mean_offset_bin0", "sigma_offset_bin0"
         }) {
           auto *var = static_cast<RooRealVar*>(
-            fit_res->floatParsFinal().find(varname.c_str()));
+            fit_res.first->floatParsFinal().find(varname.c_str()));
           hstat[varname] = {var->getVal(),var->getError()};
         }
+        hstat["FWHM"] = get_FWHM(fit_res.second);
+        
+        fit_res.second->SetLineColor(41);
+        fit_res.second->SetMarkerColor(41);
+        fit_res.second->SetLineWidth(2);
+        fit_res.second->Draw("same");
+
 /*
         auto Nsig = static_cast<RooRealVar*>(
           fit_res->floatParsFinal().find("NSig_bin0")
@@ -484,13 +505,15 @@ int main(int argc, char** argv)
     txt[2]->AddText(ccat(fixed,setprecision(res_prec),res));
 
     txt[0]->AddText("Uncertainty");
-    txt[1]->AddText(ccat(fixed,setprecision(scale_prec),scale_down,", ",scale_up));
-    txt[2]->AddText(ccat(fixed,setprecision(res_prec),res_down,", ",res_up));
+    txt[1]->AddText(ccat(fixed,setprecision(scale_prec),scale_down,
+                         ", +",scale_up));
+    txt[2]->AddText(ccat(fixed,setprecision(res_prec),res_down,
+                         ", +",res_up));
 
 
     txt[0]->AddText("Symmetric Uncertainty");
-    txt[1]->AddText(ccat(fixed,setprecision(scale_prec),scale_sym));
-    txt[2]->AddText(ccat(fixed,setprecision(res_prec),res_sym));
+    txt[1]->AddText(ccat("#pm ",fixed,setprecision(scale_prec),scale_sym));
+    txt[2]->AddText(ccat("#pm ",fixed,setprecision(res_prec),res_sym));
     
     TLine *line = new TLine();
     for (int i=0; i<3; ++i) {

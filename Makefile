@@ -1,7 +1,7 @@
 CC  := gcc
 CXX := g++
 
-CXXFLAGS := -std=c++11 -Wall -O3
+CXXFLAGS := -std=c++11 -Wall -g
 
 ROOT_CXXFLAGS := $(shell root-config --cflags)
 ROOT_LIBS     := $(shell root-config --libs) -lMinuit2 -lRooFitCore -lRooFit -lRooStats
