@@ -9,7 +9,6 @@
 #include <unordered_set>
 #include <initializer_list>
 #include <memory>
-#include <regex>
 #include <stdexcept>
 
 #include <boost/program_options.hpp>
@@ -18,8 +17,10 @@
 #include <TTree.h>
 #include <TDirectory.h>
 #include <TH1.h>
+#include <TH2.h>
 #include <TFitResult.h>
 #include <TFitResultPtr.h>
+#include <TStyle.h>
 #include <TCanvas.h>
 #include <TLatex.h>
 #include <TPaveText.h>
@@ -56,6 +57,25 @@ using std::scientific;
 using std::setprecision;
 using std::fixed;
 namespace po = boost::program_options;
+
+#define GCC_VERSION (__GNUC__ * 10000 \
+                               + __GNUC_MINOR__ * 100 \
+                               + __GNUC_PATCHLEVEL__)
+
+#if GCC_VERSION < 40900 // Test for GCC < 4.9.0
+#include <boost/regex.hpp>
+using boost::regex;
+using boost::smatch;
+using boost::regex_match;
+#define regex_icase boost::regex::icase
+#else
+#include <regex>
+using std::regex;
+using std::smatch;
+using std::regex_match;
+using std::regex_constants::icase;
+#define regex_icase std::regex_constants::icase
+#endif
 
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
@@ -127,6 +147,8 @@ TCanvas *canv;
 TLatex *lbl;
 // --------------------------
 
+using FitResult = unique_ptr<RooFitResult>;
+
 class workspace {
   TFile *file;
   RooWorkspace *ws;
@@ -142,31 +164,30 @@ public:
     rcat(static_cast<RooCategory*>(ws->obj("mc_sample"))),
     myy(static_cast<RooRealVar*>(ws->var("m_yy")))
   {
-    test("Called ws constructor **********************************")
     for (const auto& range : new_ws_ranges)
       ws->var(range.first.c_str())
         ->setRange(range.second.first,range.second.second);
       // "mean_offset_bin0" -1.5, 1.
   }
-  
+
   /*workspace()
   : file(nullptr), ws(nullptr), sim_pdf(nullptr), rcat(nullptr), myy(nullptr)
   { }*/
-  
+
   ~workspace() {
     delete myy;
     delete rcat;
     delete sim_pdf;
     delete file;
   }
-  
+
   inline RooWorkspace* operator->() noexcept { return ws; }
-  
-  pair<unique_ptr<RooFitResult>,RooCurve*> fit(TH1* hist) const {
+
+  pair<FitResult,RooCurve*> fit(TH1* hist) const {
     // Produce a RooDataHist object from the TH1
     RooDataHist *rdh = new RooDataHist(
       "mc_dh","mc_dh",RooArgSet(*myy),hist);
-    
+
     // This map might look a bit useless,
     // but the PDF is designed to fit several datasets simultaneously.
     // This is done by assigning the PDF categories,
@@ -190,10 +211,10 @@ public:
       RooFit::Offset(true),
       RooFit::Strategy(2)
     );
-    
+
     RooPlot *frame = myy->frame();
     crdh.plotOn(frame,
-      RooFit::LineColor(12), 
+      RooFit::LineColor(12),
       RooFit::Cut("mc_sample == mc_sample::mc_125")
     );
     sim_pdf->plotOn(frame,
@@ -207,10 +228,10 @@ public:
     res->Print("v");
 
     delete rdh;
-    return {unique_ptr<RooFitResult>(res),curve};
+    return {FitResult(res),curve};
   }
 };
-  
+
 inline Double_t get_FWHM(const TH1* hist) noexcept {
   const Double_t half_max = hist->GetMaximum()/2;
   return hist->GetBinCenter(hist->FindLastBinAbove(half_max))
@@ -243,7 +264,11 @@ void make_hist(TH1*& hist, const char* name, const string& proc,
   else hist->Add(temp);
 }
 
-void draw(const initializer_list<TH1*>& hs) {
+vector<FitResult> draw(const initializer_list<TH1*>& hs) {
+
+  vector<FitResult> res;
+  if (fit==Fit::cb) res.reserve(hs.size());
+
   int i=0;
   Color_t color;
   for (auto it=hs.begin(), end=hs.end(); it!=end; ++it) {
@@ -290,7 +315,7 @@ void draw(const initializer_list<TH1*>& hs) {
         cout << "\033[32mFitting " << name << "\033[0m" << endl;
         static workspace ws(wfname);
         auto fit_res = ws.fit(hist);
-        
+
         auto &hstat = stats[name];
         for (const string& varname : {
           "crys_alpha_bin0", "crys_norm_bin0", "fcb_bin0", "gaus_kappa_bin0",
@@ -301,7 +326,7 @@ void draw(const initializer_list<TH1*>& hs) {
           hstat[varname] = {var->getVal(),var->getError()};
         }
         hstat["FWHM"] = get_FWHM(fit_res.second);
-        
+
         if (fix_alpha) if (!strcmp(name,"nominal")) {
           auto *alpha = ws->var("crys_alpha_bin0");
           alpha->setRange(alpha->getVal(),alpha->getVal());
@@ -312,10 +337,13 @@ void draw(const initializer_list<TH1*>& hs) {
           fit_res->floatParsFinal().find("NSig_bin0")
         );
         const double Nsig_rat = Nsig->getVal()/Nsig->getError();
-        hstat["p0"] = Nsig_rat > 0 ? 
+        hstat["p0"] = Nsig_rat > 0 ?
                       0.5*TMath::Prob( sq(Nsig_rat) , 1.) :
                       1 - 0.5*TMath::Prob( sq(Nsig_rat) , 1.);
 */
+
+      res.emplace_back(move(fit_res.first));
+
       break; }
     }
 
@@ -328,6 +356,8 @@ void draw(const initializer_list<TH1*>& hs) {
       cat(fixed,setprecision(2),stdev).c_str());
   }
   canv->SaveAs(ofname.c_str());
+
+  return res;
 }
 
 int main(int argc, char** argv)
@@ -403,10 +433,10 @@ int main(int argc, char** argv)
     )->GetBinContent(3);
 
     // Regex for process identification
-    static std::regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
-                              std::regex_constants::icase);
-    std::smatch proc_match;
-    if (!std::regex_match(f, proc_match, proc_re))
+    static regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
+                         regex_icase);
+    smatch proc_match;
+    if (!regex_match(f, proc_match, proc_re))
       throw runtime_error(cat("Filename \"",f,"\" does not specify process"));
     const string proc(proc_match.str(1));
 
@@ -430,7 +460,7 @@ int main(int argc, char** argv)
     delete file;
   }
   cout << endl;
-  
+
   // ---------------------------------------
 
   canv = new TCanvas();
@@ -443,7 +473,19 @@ int main(int argc, char** argv)
   lbl->SetTextSize(15);
   lbl->SetNDC();
 
-  draw({nom});
+  TH2 *corr = draw({nom}).front()
+    ->correlationHist("Nominal signal fit correlation matrix");
+
+  if (logy) canv->SetLogy(false);
+  gStyle->SetPaintTextFormat(".3f");
+  canv->SetMargin(0.17,0.12,0.1,0.1);
+  corr->SetStats(false);
+  corr->SetMarkerSize(1.8);
+  corr->Draw("COLZ TEXT");
+  canv->SaveAs(ofname.c_str());
+  canv->SetMargin(0.1,0.04,0.1,0.1);
+  if (logy) canv->SetLogy(true);
+
   draw({scale_down,scale_up});
   draw({res_down,res_up});
 
@@ -490,7 +532,7 @@ int main(int argc, char** argv)
     canv->SaveAs(ofname.c_str());
   }
   // ****************************************************************
-  
+
   if (fit==Fit::cb) {
     canv->Clear();
     double scale      = stats["nominal"   ]["mean_offset_bin0"].val;
@@ -513,7 +555,7 @@ int main(int argc, char** argv)
            fwhm_down  = fwhm_down - fwhm;
            fwhm_up    = fwhm_up   - fwhm;
     double fwhm_sym   = (fwhm_up-fwhm_down)/2;
-    
+
     vector<unique_ptr<TPaveText>> txt;
     txt.reserve(4);
     for (int i=0; i<4; ++i) {
