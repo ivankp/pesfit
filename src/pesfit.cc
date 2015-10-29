@@ -167,12 +167,7 @@ public:
     for (const auto& range : new_ws_ranges)
       ws->var(range.first.c_str())
         ->setRange(range.second.first,range.second.second);
-      // "mean_offset_bin0" -1.5, 1.
   }
-
-  /*workspace()
-  : file(nullptr), ws(nullptr), sim_pdf(nullptr), rcat(nullptr), myy(nullptr)
-  { }*/
 
   ~workspace() {
     delete myy;
@@ -242,6 +237,35 @@ inline Double_t get_FWHM(const TGraph* gr) noexcept {
   return rfindx(gr,half_max) - lfindx(gr,half_max);
 }
 
+Double_t mean_window(const TH1* hist, Double_t a, Double_t b) noexcept {
+  Int_t ai = hist->FindFixBin(a);
+  Int_t bi = hist->FindFixBin(b);
+  Double_t mean = 0., stdev = 0., sumw = 0.;
+  for (int i=ai; i<=bi; ++i) {
+    const Double_t w = hist->GetBinContent(i);
+    const Double_t x = hist->GetBinCenter(i);
+    sumw += w;
+    mean += x*w;
+  }
+  mean /= sumw;
+  for (int i=ai; i<=bi; ++i) {
+    const Double_t w = hist->GetBinContent(i);
+    const Double_t x = hist->GetBinCenter(i);
+    stdev += sq(x-mean)*w;
+  }
+  stdev = sqrt(stdev/sumw);
+
+  ai = hist->FindFixBin(mean-1.5*stdev);
+  bi = hist->FindFixBin(mean+2.0*stdev);
+  mean = 0.; sumw = 0.;
+  for (int i=ai; i<=bi; ++i) {
+    const Double_t w = hist->GetBinContent(i);
+    sumw += w;
+    mean += hist->GetBinCenter(i) * w;
+  }
+  return mean/sumw;
+}
+
 void make_hist(TH1*& hist, const char* name, const string& proc,
                double scale, const char* branch) {
   const string cmd1(cat(
@@ -298,6 +322,8 @@ vector<FitResult> draw(const initializer_list<TH1*>& hs) {
     hstat["hist_mean"] = {mean,hist->GetMeanError()};
     hstat["hist_stdev"] = {stdev,hist->GetStdDevError()};
 
+    hstat["hist_window_mean"] = mean_window(hist,120,130);
+
     switch (fit) { // FITTING +++++++++++++++++++++++++++++++++++++++
       case Fit::none: break;
 
@@ -325,7 +351,7 @@ vector<FitResult> draw(const initializer_list<TH1*>& hs) {
             fit_res.first->floatParsFinal().find(varname.c_str()));
           hstat[varname] = {var->getVal(),var->getError()};
         }
-        hstat["FWHM"] = get_FWHM(fit_res.second);
+        hstat["HWHM"] = get_FWHM(fit_res.second)/2;
 
         if (fix_alpha) if (!strcmp(name,"nominal")) {
           auto *alpha = ws->var("crys_alpha_bin0");
@@ -542,6 +568,13 @@ int main(int argc, char** argv)
            scale_up   = scale_up   - scale;
     double scale_sym  = (scale_up-scale_down)/2;
 
+    double win        = stats["nominal"   ]["hist_window_mean"].val;
+    double win_down   = stats["scale_down"]["hist_window_mean"].val;
+    double win_up     = stats["scale_up"  ]["hist_window_mean"].val;
+           win_down   = win_down - win;
+           win_up     = win_up   - win;
+    double win_sym    = (win_up-win_down)/2;
+
     double res        = stats["nominal"   ]["sigma_offset_bin0"].val;
     double res_down   = stats["res_down"  ]["sigma_offset_bin0"].val;
     double res_up     = stats["res_up"    ]["sigma_offset_bin0"].val;
@@ -549,45 +582,49 @@ int main(int argc, char** argv)
            res_up     = res_up   - res;
     double res_sym    = (res_up-res_down)/2;
 
-    double fwhm       = stats["nominal"   ]["FWHM"].val;
-    double fwhm_down  = stats["res_down"  ]["FWHM"].val;
-    double fwhm_up    = stats["res_up"    ]["FWHM"].val;
+    double fwhm       = stats["nominal"   ]["HWHM"].val;
+    double fwhm_down  = stats["res_down"  ]["HWHM"].val;
+    double fwhm_up    = stats["res_up"    ]["HWHM"].val;
            fwhm_down  = fwhm_down - fwhm;
            fwhm_up    = fwhm_up   - fwhm;
     double fwhm_sym   = (fwhm_up-fwhm_down)/2;
 
     vector<unique_ptr<TPaveText>> txt;
-    txt.reserve(4);
-    for (int i=0; i<4; ++i) {
+    txt.reserve(5);
+    for (int i=0; i<5; ++i) {
       TPaveText *pt;
-      txt.emplace_back(pt = new TPaveText(i/4.,0.,(i+1)/4.,1.,"NBNDC"));
+      txt.emplace_back(pt = new TPaveText(i/5.,0.,(i+1)/5.,1.,"NBNDC"));
       pt->SetFillColor(0);
     }
 
     txt[0]->AddText("[GeV]");
     txt[1]->AddText("Scale");
-    txt[2]->AddText("Resolution");
-    txt[3]->AddText("FWHM");
+    txt[2]->AddText("Window");
+    txt[3]->AddText("Resolution");
+    txt[4]->AddText("HWHM");
 
     txt[0]->AddText("Value");
     txt[1]->AddText(Form("%.3f",scale));
-    txt[2]->AddText(Form("%.3f",res));
-    txt[3]->AddText(Form("%.3f",fwhm));
+    txt[2]->AddText(Form("%.3f",win));
+    txt[3]->AddText(Form("%.3f",res));
+    txt[4]->AddText(Form("%.3f",fwhm));
 
     txt[0]->AddText("Uncertainty");
     txt[1]->AddText(Form("%.3f, +%.3f",scale_down,scale_up));
-    txt[2]->AddText(Form("%.3f, +%.3f",res_down,res_up));
-    txt[3]->AddText(Form("%.3f, +%.3f",fwhm_down,fwhm_up));
+    txt[2]->AddText(Form("%.3f, +%.3f",win_down,win_up));
+    txt[3]->AddText(Form("%.3f, +%.3f",res_down,res_up));
+    txt[4]->AddText(Form("%.3f, +%.3f",fwhm_down,fwhm_up));
 
     txt[0]->AddText("Average Uncertainty");
     txt[1]->AddText(Form("#pm %.3f",scale_sym));
-    txt[2]->AddText(Form("#pm %.3f",res_sym));
-    txt[3]->AddText(Form("#pm %.3f",fwhm_sym));
+    txt[2]->AddText(Form("#pm %.3f",win_sym));
+    txt[3]->AddText(Form("#pm %.3f",res_sym));
+    txt[4]->AddText(Form("#pm %.3f",fwhm_sym));
 
     TLine *line = new TLine();
-    for (int i=0; i<4; ++i) {
+    for (int i=0; i<5; ++i) {
       txt[i]->Draw();
-      if (i) line->DrawLineNDC(i/4.,0.,i/4.,1.);
+      if (i) line->DrawLineNDC(i/5.,0.,i/5.,1.);
     }
     for (int i=1; i<4; ++i) line->DrawLineNDC(0.,i/4.,1.,i/4.);
     canv->SaveAs(ofname.c_str());
