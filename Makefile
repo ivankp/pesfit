@@ -27,6 +27,7 @@ DEPS := $(patsubst %.o,%.d,$(OBJS))
 
 GREP_EXE := grep -r '^ *int *main *(' $(SRCDIR) | cut -d':' -f1
 EXES := $(patsubst $(SRCDIR)/%.cc,$(EXEDIR)/%,$(shell $(GREP_EXE)))
+EXE_DEPS := $(patsubst $(EXEDIR)/%,$(BLDDIR)/%.d,$(EXES))
 
 all: $(EXES)
 
@@ -35,10 +36,23 @@ ifeq (0, $(words $(findstring $(MAKECMDGOALS), $(NODEPS))))
 -include $(DEPS)
 endif
 
-# create dependencies
+# object and executable dependencies
+$(EXE_DEPS): $(BLDDIR)/%.d: $(SRCDIR)/%.cc
+	@echo DEP $(notdir $@)
+	@$(CXX) $(CXXFLAGS) -MM -MT '$(<:$(SRCDIR)/%.cc=$(BLDDIR)/%.o)' $< -MF $@
+	@objs=""; \
+	for f in `sed 's| \\\\$$||g;s| $(SRCDIR)/|\n|g' $@ \
+	      | sed '/\.hh$$/!d;s|\.hh$$||'`; do \
+	  [ -s "$(SRCDIR)/$$f.cc" ] && objs="$${objs} $(BLDDIR)/$$f.o"; \
+	done; \
+	if [ "$${objs}" ]; then \
+	  echo "$(@:$(BLDDIR)/%.d=$(EXEDIR)/%):$${objs}" >> $@; \
+	fi
+
+# object dependencies
 $(BLDDIR)/%.d: $(SRCDIR)/%.cc
 	@echo DEP $(notdir $@)
-	@$(CXX) $(CXXFLAGS) -MM -MT '$(patsubst $(SRCDIR)/%.cc,$(BLDDIR)/%.o,$<)' $< -MF $@
+	@$(CXX) $(CXXFLAGS) -MM -MT '$(<:$(SRCDIR)/%.cc=$(BLDDIR)/%.o)' $< -MF $@
 
 # compile objects
 $(BLDDIR)/%.o : $(SRCDIR)/%.cc
@@ -61,4 +75,3 @@ $(BLDDIR) $(EXEDIR):
 clean:
 	@rm -vfr $(BLDDIR) $(EXEDIR)
 
-$(EXEDIR)/pesfit: $(BLDDIR)/TGraph_fcns.o
