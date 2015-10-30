@@ -351,7 +351,7 @@ vector<FitResult> draw(const initializer_list<TH1*>& hs) {
             fit_res.first->floatParsFinal().find(varname.c_str()));
           hstat[varname] = {var->getVal(),var->getError()};
         }
-        hstat["HWHM"] = get_FWHM(fit_res.second)/2;
+        hstat["FWHM"] = get_FWHM(fit_res.second);
 
         if (fix_alpha) if (!strcmp(name,"nominal")) {
           auto *alpha = ws->var("crys_alpha_bin0");
@@ -582,18 +582,18 @@ int main(int argc, char** argv)
            res_up     = res_up   - res;
     double res_sym    = (res_up-res_down)/2;
 
-    double fwhm       = stats["nominal"   ]["HWHM"].val;
-    double fwhm_down  = stats["res_down"  ]["HWHM"].val;
-    double fwhm_up    = stats["res_up"    ]["HWHM"].val;
+    double fwhm       = stats["nominal"   ]["FWHM"].val;
+    double fwhm_down  = stats["res_down"  ]["FWHM"].val;
+    double fwhm_up    = stats["res_up"    ]["FWHM"].val;
            fwhm_down  = fwhm_down - fwhm;
            fwhm_up    = fwhm_up   - fwhm;
     double fwhm_sym   = (fwhm_up-fwhm_down)/2;
 
     vector<unique_ptr<TPaveText>> txt;
-    txt.reserve(5);
-    for (int i=0; i<5; ++i) {
+    txt.reserve(6);
+    for (int i=0; i<6; ++i) {
       TPaveText *pt;
-      txt.emplace_back(pt = new TPaveText(i/5.,0.,(i+1)/5.,1.,"NBNDC"));
+      txt.emplace_back(pt = new TPaveText(i/6.,0.,(i+1)/6.,1.,"NBNDC"));
       pt->SetFillColor(0);
     }
 
@@ -602,29 +602,34 @@ int main(int argc, char** argv)
     txt[2]->AddText("Window");
     txt[3]->AddText("Resolution");
     txt[4]->AddText("HWHM");
+    txt[5]->AddText("FWHM/FWHM_{nom}");
 
-    txt[0]->AddText("Value");
+    txt[0]->AddText("Nominal");
     txt[1]->AddText(Form("%.3f",scale));
     txt[2]->AddText(Form("%.3f",win));
     txt[3]->AddText(Form("%.3f",res));
-    txt[4]->AddText(Form("%.3f",fwhm));
+    txt[4]->AddText(Form("%.3f",fwhm/2));
+    txt[5]->AddText("1");
 
-    txt[0]->AddText("Uncertainty");
+    txt[0]->AddText("Variation");
     txt[1]->AddText(Form("%.3f, +%.3f",scale_down,scale_up));
     txt[2]->AddText(Form("%.3f, +%.3f",win_down,win_up));
     txt[3]->AddText(Form("%.3f, +%.3f",res_down,res_up));
-    txt[4]->AddText(Form("%.3f, +%.3f",fwhm_down,fwhm_up));
+    txt[4]->AddText(Form("%.3f, +%.3f",fwhm_down/2,fwhm_up/2));
+    txt[5]->AddText(Form("%.3f, +%.3f",fwhm_down/fwhm,fwhm_up/fwhm));
 
-    txt[0]->AddText("Average Uncertainty");
+    txt[0]->AddText("Average Variation");
     txt[1]->AddText(Form("#pm %.3f",scale_sym));
     txt[2]->AddText(Form("#pm %.3f",win_sym));
     txt[3]->AddText(Form("#pm %.3f",res_sym));
-    txt[4]->AddText(Form("#pm %.3f",fwhm_sym));
+    txt[4]->AddText(Form("#pm %.3f",fwhm_sym/2));
+    txt[5]->AddText(Form("#pm %.3f",fwhm_sym/fwhm));
 
     TLine *line = new TLine();
-    for (int i=0; i<5; ++i) {
+
+    for (int i=0; i<6; ++i) {
       txt[i]->Draw();
-      if (i) line->DrawLineNDC(i/5.,0.,i/5.,1.);
+      if (i) line->DrawLineNDC(i/6.,0.,i/6.,1.);
     }
     for (int i=1; i<4; ++i) line->DrawLineNDC(0.,i/4.,1.,i/4.);
     canv->SaveAs(ofname.c_str());
