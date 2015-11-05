@@ -74,4 +74,3 @@ $(BLDDIR) $(EXEDIR):
 
 clean:
 	@rm -vfr $(BLDDIR) $(EXEDIR)
-

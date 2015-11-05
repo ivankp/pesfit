@@ -1,84 +1,5 @@
 // Developed by Ivan Pogrebnyak, MSU
-
-#include <iostream>
-#include <iomanip>
-#include <sstream>
-#include <string>
-#include <vector>
-#include <map>
-#include <unordered_set>
-#include <initializer_list>
-#include <memory>
-#include <stdexcept>
-
-#include <boost/program_options.hpp>
-
-#include <TFile.h>
-#include <TTree.h>
-#include <TDirectory.h>
-#include <TH1.h>
-#include <TH2.h>
-#include <TFitResult.h>
-#include <TFitResultPtr.h>
-#include <TStyle.h>
-#include <TCanvas.h>
-#include <TLatex.h>
-#include <TPaveText.h>
-#include <TLine.h>
-#include <TMath.h>
-
-#include <RooWorkspace.h>
-#include <RooRealVar.h>
-#include <RooSimultaneous.h>
-#include <RooCategory.h>
-#include <RooDataHist.h>
-#include <RooFitResult.h>
-#include <RooPlot.h>
-#include <RooCurve.h>
-
-#include "catstr.hh"
-#include "senum.hh"
-#include "val_err.hh"
-#include "TGraph_fcns.hh"
-
-using std::cout;
-using std::cerr;
-using std::endl;
-using std::string;
-using std::pair;
-using std::vector;
-using std::map;
-using std::unordered_set;
-using std::initializer_list;
-using std::unique_ptr;
-using std::runtime_error;
-using std::stringstream;
-using std::scientific;
-using std::setprecision;
-using std::fixed;
-namespace po = boost::program_options;
-
-#define GCC_VERSION (__GNUC__ * 10000 \
-                               + __GNUC_MINOR__ * 100 \
-                               + __GNUC_PATCHLEVEL__)
-
-#if GCC_VERSION < 40900 // Test for GCC < 4.9.0
-#include <boost/regex.hpp>
-using boost::regex;
-using boost::smatch;
-using boost::regex_match;
-#define regex_icase boost::regex::icase
-#else
-#include <regex>
-using std::regex;
-using std::smatch;
-using std::regex_match;
-using std::regex_constants::icase;
-#define regex_icase std::regex_constants::icase
-#endif
-
-#define test(var) \
-  std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
+#include "pesfit.hh"
 
 template<typename T> inline T sq(T x) noexcept { return x*x; }
 
@@ -96,39 +17,11 @@ namespace std {
   }
 }
 
-template<typename T, typename Key=std::string>
-class seqmap: public std::vector<std::pair<Key,T>> {
-public:
-  T& operator[](const Key& key) {
-    auto it = std::find_if(this->begin(),this->end(),
-      [&key](const std::pair<Key,T>& p){ return p.first==key; });
-    if (it==this->end()) {
-      this->emplace_back(key,T());
-      return this->back().second;
-    } else return it->second;
-  }
-};
-
-template<typename T>
-inline T* get(TDirectory* d, const char* name) {
-  TObject *obj = d->Get(name);
-  if (!obj) {
-    throw runtime_error( cat(
-      "No object ",name," in ",d->GetName()
-    ) );
-  } else if (obj->InheritsFrom(T::Class())) {
-    return static_cast<T*>(obj);
-  } else {
-    throw runtime_error( cat(
-      obj->ClassName(), ' ', obj->GetName(),
-      " does not inherit from ", T::Class()->GetName()
-    ) );
-  }
-}
-
 // options ------------------
 senum(Fit,(none)(gaus)(cb))
-Fit::type fit;
+Fit::type fit_;
+senum(Out,(pdf)(root))
+Out::type out_;
 
 string ofname, cfname, wfname;
 vector<string> ifname;
@@ -141,91 +34,13 @@ vector<pair<string,pair<double,double>>> new_ws_ranges;
 // --------------------------
 
 // global -------------------
+TFile *ofile;
+workspace *ws;
 seqmap<seqmap<val_err<double>>> stats;
 TTree *tree;
 TCanvas *canv;
 TLatex *lbl;
 // --------------------------
-
-using FitResult = unique_ptr<RooFitResult>;
-
-class workspace {
-  TFile *file;
-  RooWorkspace *ws;
-  RooSimultaneous *sim_pdf;
-  RooCategory *rcat;
-  RooRealVar *myy;
-
-public:
-  workspace(const string& fname)
-  : file(new TFile(fname.c_str(),"read")),
-    ws(get<RooWorkspace>(file,"mcfit")),
-    sim_pdf(static_cast<RooSimultaneous*>(ws->obj("mc_sim_pdf_bin0"))),
-    rcat(static_cast<RooCategory*>(ws->obj("mc_sample"))),
-    myy(static_cast<RooRealVar*>(ws->var("m_yy")))
-  {
-    for (const auto& range : new_ws_ranges)
-      ws->var(range.first.c_str())
-        ->setRange(range.second.first,range.second.second);
-  }
-
-  ~workspace() {
-    delete myy;
-    delete rcat;
-    delete sim_pdf;
-    delete file;
-  }
-
-  inline RooWorkspace* operator->() noexcept { return ws; }
-
-  pair<FitResult,RooCurve*> fit(TH1* hist) const {
-    // Produce a RooDataHist object from the TH1
-    RooDataHist *rdh = new RooDataHist(
-      "mc_dh","mc_dh",RooArgSet(*myy),hist);
-
-    // This map might look a bit useless,
-    // but the PDF is designed to fit several datasets simultaneously.
-    // This is done by assigning the PDF categories,
-    // here we only have one histogram
-    map<string,RooDataHist*> rdhmap;
-    rdhmap["mc_125"] = rdh;
-
-    // With the map we can build one combined dataset
-    // that has the proper link of the category information.
-    RooDataHist crdh("c_mc_dh","c_mc_dh",
-      RooArgSet(*myy), RooFit::Index(*rcat), RooFit::Import(rdhmap));
-
-    // Now we are ready to fit! We have a PDF and a RooDataHist
-    RooFitResult *res = sim_pdf->fitTo(crdh,
-      RooFit::Extended(false),
-      RooFit::InitialHesse(true),
-      RooFit::SumW2Error(true),
-      RooFit::Save(true),
-      RooFit::NumCPU(4),
-      RooFit::Minimizer("Minuit2"),
-      RooFit::Offset(true),
-      RooFit::Strategy(2)
-    );
-
-    RooPlot *frame = myy->frame();
-    crdh.plotOn(frame,
-      RooFit::LineColor(12),
-      RooFit::Cut("mc_sample == mc_sample::mc_125")
-    );
-    sim_pdf->plotOn(frame,
-      RooFit::LineColor(85),
-      RooFit::Slice(*rcat, "mc_125"),
-      RooFit::ProjWData(RooArgSet(*rcat), crdh)
-    );
-    auto *curve = frame->getCurve();
-    //frame->Draw("same");
-    curve->Draw("same");
-    res->Print("v");
-
-    delete rdh;
-    return {FitResult(res),curve};
-  }
-};
 
 inline Double_t get_FWHM(const TH1* hist) noexcept {
   const Double_t half_max = hist->GetMaximum()/2;
@@ -235,35 +50,6 @@ inline Double_t get_FWHM(const TH1* hist) noexcept {
 inline Double_t get_FWHM(const TGraph* gr) noexcept {
   const Double_t half_max = max(gr).second/2;
   return rfindx(gr,half_max) - lfindx(gr,half_max);
-}
-
-Double_t mean_window(const TH1* hist, Double_t a, Double_t b) noexcept {
-  Int_t ai = hist->FindFixBin(a);
-  Int_t bi = hist->FindFixBin(b);
-  Double_t mean = 0., stdev = 0., sumw = 0.;
-  for (int i=ai; i<=bi; ++i) {
-    const Double_t w = hist->GetBinContent(i);
-    const Double_t x = hist->GetBinCenter(i);
-    sumw += w;
-    mean += x*w;
-  }
-  mean /= sumw;
-  for (int i=ai; i<=bi; ++i) {
-    const Double_t w = hist->GetBinContent(i);
-    const Double_t x = hist->GetBinCenter(i);
-    stdev += sq(x-mean)*w;
-  }
-  stdev = sqrt(stdev/sumw);
-
-  ai = hist->FindFixBin(mean-1.5*stdev);
-  bi = hist->FindFixBin(mean+2.0*stdev);
-  mean = 0.; sumw = 0.;
-  for (int i=ai; i<=bi; ++i) {
-    const Double_t w = hist->GetBinContent(i);
-    sumw += w;
-    mean += hist->GetBinCenter(i) * w;
-  }
-  return mean/sumw;
 }
 
 void make_hist(TH1*& hist, const char* name, const string& proc,
@@ -288,10 +74,10 @@ void make_hist(TH1*& hist, const char* name, const string& proc,
   else hist->Add(temp);
 }
 
-vector<FitResult> draw(const initializer_list<TH1*>& hs) {
+vector<FitResult> fit(const initializer_list<TH1*>& hs) {
 
   vector<FitResult> res;
-  if (fit==Fit::cb) res.reserve(hs.size());
+  if (fit_==Fit::cb) res.reserve(hs.size());
 
   int i=0;
   Color_t color;
@@ -304,15 +90,22 @@ vector<FitResult> draw(const initializer_list<TH1*>& hs) {
     hist->SetLineColor(color);
     hist->SetMarkerColor(color);
 
-    if (it==hs.begin()) {
-      hist->SetXTitle("m_{#gamma#gamma} [GeV]");
-      hist->SetYTitle("d#sigma/dm_{#gamma#gamma} [fb/GeV]");
-      hist->SetTitleOffset(1.3,"Y");
-      hist->Draw();
-      lbl->DrawLatex(.24,0.88-0.04*i,"Entries");
-      lbl->DrawLatex(.32,0.88-0.04*i,"mean");
-      lbl->DrawLatex(.40,0.88-0.04*i,"stdev");
-    } else hist->Draw("same");
+    hist->SetXTitle("m_{#gamma#gamma} [GeV]");
+    hist->SetYTitle("d#sigma/dm_{#gamma#gamma} [fb/GeV]");
+    hist->SetTitleOffset(1.3,"Y");
+    switch (out_) {
+      case Out::pdf:
+        if (it==hs.begin()) {
+          hist->Draw();
+          lbl->DrawLatex(.24,0.88-0.04*i,"Entries");
+          lbl->DrawLatex(.32,0.88-0.04*i,"mean");
+          lbl->DrawLatex(.40,0.88-0.04*i,"stdev");
+        } else hist->Draw("same");
+        break;
+      case Out::root:
+        hist->SetDirectory(ofile);
+        break;
+    }
 
     Double_t mean  = hist->GetMean(),
              stdev = hist->GetStdDev();
@@ -322,9 +115,9 @@ vector<FitResult> draw(const initializer_list<TH1*>& hs) {
     hstat["hist_mean"] = {mean,hist->GetMeanError()};
     hstat["hist_stdev"] = {stdev,hist->GetStdDevError()};
 
-    hstat["hist_window_mean"] = mean_window(hist,120,130);
+    hstat["hist_window_mean"] = window_mean(hist,120,130);
 
-    switch (fit) { // FITTING +++++++++++++++++++++++++++++++++++++++
+    switch (fit_) { // FITTING +++++++++++++++++++++++++++++++++++++++
       case Fit::none: break;
 
       case Fit::gaus: {
@@ -339,8 +132,18 @@ vector<FitResult> draw(const initializer_list<TH1*>& hs) {
 
       case Fit::cb: {
         cout << "\033[32mFitting " << name << "\033[0m" << endl;
-        static workspace ws(wfname);
-        auto fit_res = ws.fit(hist);
+        auto fit_res = ws->fit(hist);
+        switch (out_) {
+          case Out::pdf:
+            fit_res.second->Draw("same");
+            break;
+          case Out::root:
+            auto *fit_gr = new TGraph(*fit_res.second);
+            fit_gr->SetName(cat(hist->GetName(),"_fit").c_str());
+            fit_gr->SetTitle(fit_gr->GetName());
+            ofile->Add(fit_gr);
+            break;
+        }
 
         auto &hstat = stats[name];
         for (const string& varname : {
@@ -354,7 +157,7 @@ vector<FitResult> draw(const initializer_list<TH1*>& hs) {
         hstat["FWHM"] = get_FWHM(fit_res.second);
 
         if (fix_alpha) if (!strcmp(name,"nominal")) {
-          auto *alpha = ws->var("crys_alpha_bin0");
+          auto *alpha = (*ws)->var("crys_alpha_bin0");
           alpha->setRange(alpha->getVal(),alpha->getVal());
         }
 
@@ -373,15 +176,17 @@ vector<FitResult> draw(const initializer_list<TH1*>& hs) {
       break; }
     }
 
-    auto lblp = lbl->DrawLatex(.12,0.84-0.04*i,hist->GetName());
-    lblp->SetTextColor(color);
-    lblp->DrawLatex(.24,0.84-0.04*i,cat(hist->GetEntries()).c_str());
-    lblp->DrawLatex(.32,0.84-0.04*i,
-      cat(fixed,setprecision(2),mean).c_str());
-    lblp->DrawLatex(.40,0.84-0.04*i,
-      cat(fixed,setprecision(2),stdev).c_str());
+    if (out_==Out::pdf) {
+      auto lblp = lbl->DrawLatex(.12,0.84-0.04*i,hist->GetName());
+      lblp->SetTextColor(color);
+      lblp->DrawLatex(.24,0.84-0.04*i,cat(hist->GetEntries()).c_str());
+      lblp->DrawLatex(.32,0.84-0.04*i,
+        cat(fixed,setprecision(2),mean).c_str());
+      lblp->DrawLatex(.40,0.84-0.04*i,
+        cat(fixed,setprecision(2),stdev).c_str());
+    }
   }
-  canv->SaveAs(ofname.c_str());
+  if (out_==Out::pdf) canv->SaveAs(ofname.c_str());
 
   return res;
 }
@@ -401,7 +206,7 @@ int main(int argc, char** argv)
 
       ("logy,l", po::bool_switch(&logy),
        "logarithmic Y axis")
-      ("fit,f", po::value(&fit)->default_value(Fit::none),
+      ("fit,f", po::value(&fit_)->default_value(Fit::none),
        cat("fit type: ",Fit::_str_all()).c_str())
       ("workspace,w", po::value(&wfname)->default_value("data/ws.root"),
        "ROOT file with RooWorkspace for CB fits")
@@ -436,11 +241,25 @@ int main(int argc, char** argv)
         vm["config"].as<string>().c_str(), desc), vm);
     }
     po::notify(vm);
+
+    const string ofext = ofname.substr(ofname.rfind('.')+1);
+    if (ofext=="pdf") out_ = Out::pdf;
+    else if (ofext=="root") out_ = Out::root;
+    else throw runtime_error(
+      "Output file extension "+ofext+" is not pdf or root"
+    );
+
   } catch (std::exception& e) {
     cerr << "\033[31mArgs: " <<  e.what() <<"\033[0m"<< endl;
     return 1;
   }
   // end options ---------------------------------------------------
+
+  if (out_==Out::root) ofile = new TFile(ofname.c_str(),"recreate");
+
+  ws = new workspace(wfname);
+  for (const auto& range : new_ws_ranges)
+    ws->setRange(range.first.c_str(),range.second.first,range.second.second);
 
   TH1 *nom=nullptr,
       *scale_down=nullptr, *scale_up=nullptr,
@@ -489,34 +308,44 @@ int main(int argc, char** argv)
 
   // ---------------------------------------
 
-  canv = new TCanvas();
-  canv->SetMargin(0.1,0.04,0.1,0.1);
-  if (logy) canv->SetLogy();
-  canv->SaveAs((ofname+'[').c_str());
+  if (out_==Out::pdf) {
+    canv = new TCanvas();
+    canv->SetMargin(0.1,0.04,0.1,0.1);
+    if (logy) canv->SetLogy();
+    canv->SaveAs((ofname+'[').c_str());
 
-  lbl = new TLatex();
-  lbl->SetTextFont(43);
-  lbl->SetTextSize(15);
-  lbl->SetNDC();
+    lbl = new TLatex();
+    lbl->SetTextFont(43);
+    lbl->SetTextSize(15);
+    lbl->SetNDC();
+  }
 
-  TH2 *corr = draw({nom}).front()
-    ->correlationHist("Nominal signal fit correlation matrix");
+  TH2 *corr = fit({nom}).front()
+    ->correlationHist("corr_mat");
+  corr->SetTitle("Nominal signal fit correlation matrix");
 
-  if (logy) canv->SetLogy(false);
-  gStyle->SetPaintTextFormat(".3f");
-  canv->SetMargin(0.17,0.12,0.1,0.1);
-  corr->SetStats(false);
-  corr->SetMarkerSize(1.8);
-  corr->Draw("COLZ TEXT");
-  canv->SaveAs(ofname.c_str());
-  canv->SetMargin(0.1,0.04,0.1,0.1);
-  if (logy) canv->SetLogy(true);
+  switch (out_) {
+    case Out::pdf:
+      if (logy) canv->SetLogy(false);
+      gStyle->SetPaintTextFormat(".3f");
+      canv->SetMargin(0.17,0.12,0.1,0.1);
+      corr->SetStats(false);
+      corr->SetMarkerSize(1.8);
+      corr->Draw("COLZ TEXT");
+      canv->SaveAs(ofname.c_str());
+      canv->SetMargin(0.1,0.04,0.1,0.1);
+      if (logy) canv->SetLogy(true);
+      break;
+    case Out::root:
+      corr->SetDirectory(ofile);
+      break;
+  }
 
-  draw({scale_down,scale_up});
-  draw({res_down,res_up});
+  fit({scale_down,scale_up});
+  fit({res_down,res_up});
 
   // Print summary page *********************************************
-  {
+  if (out_==Out::pdf) {
     canv->Clear();
     vector<unique_ptr<TPaveText>> txt;
     int i, n=6;
@@ -559,8 +388,7 @@ int main(int argc, char** argv)
   }
   // ****************************************************************
 
-  if (fit==Fit::cb) {
-    canv->Clear();
+  if (fit_==Fit::cb) {
     double scale      = stats["nominal"   ]["mean_offset_bin0"].val;
     double scale_down = stats["scale_down"]["mean_offset_bin0"].val;
     double scale_up   = stats["scale_up"  ]["mean_offset_bin0"].val;
@@ -589,55 +417,86 @@ int main(int argc, char** argv)
            fwhm_up    = fwhm_up   - fwhm;
     double fwhm_sym   = (fwhm_up-fwhm_down)/2;
 
-    vector<unique_ptr<TPaveText>> txt;
-    txt.reserve(6);
-    for (int i=0; i<6; ++i) {
-      TPaveText *pt;
-      txt.emplace_back(pt = new TPaveText(i/6.,0.,(i+1)/6.,1.,"NBNDC"));
-      pt->SetFillColor(0);
+    if (out_==Out::pdf) {
+      canv->Clear();
+      vector<unique_ptr<TPaveText>> txt;
+      txt.reserve(6);
+      for (int i=0; i<6; ++i) {
+        TPaveText *pt;
+        txt.emplace_back(pt = new TPaveText(i/6.,0.,(i+1)/6.,1.,"NBNDC"));
+        pt->SetFillColor(0);
+      }
+
+      txt[0]->AddText("[GeV]");
+      txt[1]->AddText("Scale");
+      txt[2]->AddText("Window");
+      txt[3]->AddText("Resolution");
+      txt[4]->AddText("HWHM");
+      txt[5]->AddText("FWHM/FWHM_{nom}");
+
+      txt[0]->AddText("Nominal");
+      txt[1]->AddText(Form("%.3f",scale));
+      txt[2]->AddText(Form("%.3f",win));
+      txt[3]->AddText(Form("%.3f",res));
+      txt[4]->AddText(Form("%.3f",fwhm/2));
+      txt[5]->AddText("1");
+
+      txt[0]->AddText("Variation");
+      txt[1]->AddText(Form("%.3f, +%.3f",scale_down,scale_up));
+      txt[2]->AddText(Form("%.3f, +%.3f",win_down,win_up));
+      txt[3]->AddText(Form("%.3f, +%.3f",res_down,res_up));
+      txt[4]->AddText(Form("%.3f, +%.3f",fwhm_down/2,fwhm_up/2));
+      txt[5]->AddText(Form("%.3f, +%.3f",fwhm_down/fwhm,fwhm_up/fwhm));
+
+      txt[0]->AddText("Average Variation");
+      txt[1]->AddText(Form("#pm %.3f",scale_sym));
+      txt[2]->AddText(Form("#pm %.3f",win_sym));
+      txt[3]->AddText(Form("#pm %.3f",res_sym));
+      txt[4]->AddText(Form("#pm %.3f",fwhm_sym/2));
+      txt[5]->AddText(Form("#pm %.3f",fwhm_sym/fwhm));
+
+      TLine *line = new TLine();
+
+      for (int i=0; i<6; ++i) {
+        txt[i]->Draw();
+        if (i) line->DrawLineNDC(i/6.,0.,i/6.,1.);
+      }
+      for (int i=1; i<4; ++i) line->DrawLineNDC(0.,i/4.,1.,i/4.);
+      canv->SaveAs(ofname.c_str());
     }
-
-    txt[0]->AddText("[GeV]");
-    txt[1]->AddText("Scale");
-    txt[2]->AddText("Window");
-    txt[3]->AddText("Resolution");
-    txt[4]->AddText("HWHM");
-    txt[5]->AddText("FWHM/FWHM_{nom}");
-
-    txt[0]->AddText("Nominal");
-    txt[1]->AddText(Form("%.3f",scale));
-    txt[2]->AddText(Form("%.3f",win));
-    txt[3]->AddText(Form("%.3f",res));
-    txt[4]->AddText(Form("%.3f",fwhm/2));
-    txt[5]->AddText("1");
-
-    txt[0]->AddText("Variation");
-    txt[1]->AddText(Form("%.3f, +%.3f",scale_down,scale_up));
-    txt[2]->AddText(Form("%.3f, +%.3f",win_down,win_up));
-    txt[3]->AddText(Form("%.3f, +%.3f",res_down,res_up));
-    txt[4]->AddText(Form("%.3f, +%.3f",fwhm_down/2,fwhm_up/2));
-    txt[5]->AddText(Form("%.3f, +%.3f",fwhm_down/fwhm,fwhm_up/fwhm));
-
-    txt[0]->AddText("Average Variation");
-    txt[1]->AddText(Form("#pm %.3f",scale_sym));
-    txt[2]->AddText(Form("#pm %.3f",win_sym));
-    txt[3]->AddText(Form("#pm %.3f",res_sym));
-    txt[4]->AddText(Form("#pm %.3f",fwhm_sym/2));
-    txt[5]->AddText(Form("#pm %.3f",fwhm_sym/fwhm));
-
-    TLine *line = new TLine();
-
-    for (int i=0; i<6; ++i) {
-      txt[i]->Draw();
-      if (i) line->DrawLineNDC(i/6.,0.,i/6.,1.);
-    }
-    for (int i=1; i<4; ++i) line->DrawLineNDC(0.,i/4.,1.,i/4.);
-    canv->SaveAs(ofname.c_str());
   }
 
-  canv->SaveAs((ofname+']').c_str());
-  delete canv;
-  delete lbl;
+  if (out_==Out::root) {
+    ofile->cd();
+    TTree *tree = new TTree("stats","stats");
+
+    structmap(double,hist_t,
+      (nominal)(scale_down)(scale_up)(res_down)(res_up));
+
+    seqmap<hist_t> tstats;
+    for (auto& hist : stats)
+      for (auto& var : hist.second)
+        tstats[var.first][hist.first] = var.second;
+
+    for (auto& stat : tstats)
+      tree->Branch(stat.first.c_str(), &stat.second,
+        "nominal/D:scale_down/D:scale_up/D:res_down/D:res_up/D");
+
+    tree->Write();
+  }
+
+  switch (out_) {
+    case Out::pdf:
+      canv->SaveAs((ofname+']').c_str());
+      delete canv;
+      delete lbl;
+      break;
+    case Out::root:
+      ofile->Write(0,TObject::kOverwrite);
+      ofile->Close();
+      delete ofile;
+      break;
+  }
 
   return 0;
 }
