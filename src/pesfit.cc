@@ -482,7 +482,7 @@ int main(int argc, char** argv)
       tree->Branch(stat.first.c_str(), &stat.second,
         "nominal/D:scale_down/D:scale_up/D:res_down/D:res_up/D");
 
-    tree->Write();
+    tree->Fill();
   }
 
   switch (out_) {

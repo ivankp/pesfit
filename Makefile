@@ -55,7 +55,7 @@ $(BLDDIR)/%.d: $(SRCDIR)/%.cc
 	@$(CXX) $(CXXFLAGS) -MM -MT '$(<:$(SRCDIR)/%.cc=$(BLDDIR)/%.o)' $< -MF $@
 
 # compile objects
-$(BLDDIR)/%.o : $(SRCDIR)/%.cc
+$(BLDDIR)/%.o :
 	@echo CXX $(notdir $@)
 	@$(CXX) -c -I$(SRCDIR) $(CXXFLAGS) $(ROOT_CXXFLAGS) $< -o $@
 
