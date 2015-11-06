@@ -1,6 +1,11 @@
 #ifndef seqmap_hh
 #define seqmap_hh
 
+#include <vector>
+#include <string>
+#include <utility>
+#include <algorithm>
+
 template<typename T, typename Key=std::string>
 class seqmap: public std::vector<std::pair<Key,T>> {
 public:

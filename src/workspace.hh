@@ -20,6 +20,7 @@ class RooRealVar;
 using FitResult = std::unique_ptr<RooFitResult>;
 
 class workspace {
+  bool bg;
   TFile *file;
   RooWorkspace *ws;
   RooSimultaneous *sim_pdf;
@@ -27,7 +28,7 @@ class workspace {
   RooRealVar *myy;
 
 public:
-  workspace(const std::string& fname);
+  workspace(const std::string& fname, bool bg=false);
   ~workspace();
 
   inline RooWorkspace* operator->() noexcept { return ws; }

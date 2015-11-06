@@ -200,7 +200,7 @@ int main(int argc, char** argv)
       ("input,i", po::value(&ifname)->multitoken()->required(),
        "*input root file names")
       ("output,o", po::value(&ofname)->required(),
-       "*output pdf file name")
+       "*output pdf or root file name")
       ("config,c", po::value(&cfname),
        "configuration file name")
 
