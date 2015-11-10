@@ -23,6 +23,7 @@
 #include "seqmap.hh"
 #include "structmap.hh"
 #include "root_safe_get.hh"
+#include "val_err.hh"
 #include "workspace.hh"
 
 using namespace std;
@@ -31,7 +32,7 @@ namespace po = boost::program_options;
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
 
-structmap(double,hist_t,
+structmap(val_err<double>,hist_t,
   (nominal)(scale_down)(scale_up)(res_down)(res_up));
 
 Double_t exp2(const Double_t* x, const Double_t* p) noexcept {

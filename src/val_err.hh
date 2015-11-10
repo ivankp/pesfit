@@ -94,4 +94,10 @@ std::ostream& operator<<(std::ostream& out, const val_err<T>& x) {
   return x.print(out);
 }
 
+// output stream operator
+template<typename T>
+std::ostream& operator<<(std::ostream& out, const std::pair<val_err<T>,const char*>& x) {
+  return x.first.print(out,x.second);
+}
+
 #endif

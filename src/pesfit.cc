@@ -470,7 +470,7 @@ int main(int argc, char** argv)
     ofile->cd();
     TTree *tree = new TTree("stats","stats");
 
-    structmap(double,hist_t,
+    structmap(val_err<double>,hist_t,
       (nominal)(scale_down)(scale_up)(res_down)(res_up));
 
     seqmap<hist_t> tstats;
@@ -480,7 +480,7 @@ int main(int argc, char** argv)
 
     for (auto& stat : tstats)
       tree->Branch(stat.first.c_str(), &stat.second,
-        "nominal/D:scale_down/D:scale_up/D:res_down/D:res_up/D");
+        "nominal[2]/D:scale_down[2]/D:scale_up[2]/D:res_down[2]/D:res_up[2]/D");
 
     tree->Fill();
   }
