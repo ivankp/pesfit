@@ -19,6 +19,7 @@
 #include "seqmap.hh"
 #include "root_safe_get.hh"
 #include "val_err.hh"
+#include "TGraph_fcns.hh"
 
 using namespace std;
 
@@ -80,14 +81,16 @@ int main(int argc, char** argv)
   h_nominal->Draw("E1");
   f_nominal->Draw("same");
   
-  const double lxmin = 0.67;
+  double lxmin = 0.67;
+  double ly = 0.9;
   
-  lbl.DrawLatex(lxmin,0.9,"ATLAS")->SetTextFont(73);
-  lbl.DrawLatex(lxmin+0.095,0.9,"Internal");
-  lbl.DrawLatex(lxmin,0.85,"#it{#sqrt{s}} = 8 TeV");
-  lbl.DrawLatex(lxmin,0.80,"#it{H#rightarrow#gamma#gamma}, #it{m_{H}} = 125 GeV");
+  lbl.DrawLatex(lxmin,ly,"ATLAS")->SetTextFont(73);
+  lbl.DrawLatex(lxmin+0.095,ly,"Internal");
+  lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 8 TeV");
+  lbl.DrawLatex(lxmin,ly-=0.06,"#it{H#rightarrow#gamma#gamma}, #it{m_{H}} = 125 GeV");
   
-  TLegend leg(lxmin,0.73,lxmin+0.21,0.785);
+  ly-=0.075;
+  TLegend leg(lxmin,ly,lxmin+0.21,ly+0.055);
   leg.AddEntry(h_nominal,"MC","le");
   leg.AddEntry(f_nominal,"Model","l");
   leg.SetBorderSize(0);
@@ -95,44 +98,60 @@ int main(int argc, char** argv)
   leg.SetFillStyle(0);
   leg.Draw();
   
-  lbl.DrawLatex(lxmin,0.65,"Fit parameters:");
-  lbl.DrawLatex(lxmin,0.60,cat(
+  lxmin = 0.12;
+  ly = 0.9;
+  
+  lbl.DrawLatex(lxmin,ly,"Fit parameters:");
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
     "#mu_{CB} = ",
     make_pair(stats["mean_offset_bin0"].nominal+125.," #pm "),
     " [GeV]"
   ).c_str());
-  lbl.DrawLatex(lxmin,0.55,cat(
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
     "#sigma_{CB} = ",
     make_pair(stats["sigma_offset_bin0"].nominal," #pm "),
     " [GeV]"
   ).c_str());
-  lbl.DrawLatex(lxmin,0.50,cat(
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
     "#alpha_{CB} = ",
     make_pair(stats["crys_alpha_bin0"].nominal," #pm ")
   ).c_str());
-  lbl.DrawLatex(lxmin,0.45,cat(
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
     "#it{n}_{CB} = ",
-    setprecision(3),
+    fixed, setprecision(1),
     stats["crys_norm_bin0"].nominal.val,
     " (fixed)"
   ).c_str());
-  lbl.DrawLatex(lxmin,0.40,cat(
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
     "#mu_{GA} = ",
     make_pair(stats["gaus_mean_offset_bin0"].nominal+125.," #pm "),
     " [GeV]"
   ).c_str());
-  lbl.DrawLatex(lxmin,0.35,cat(
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
     "#kappa_{GA} = ",
     make_pair(stats["gaus_kappa_bin0"].nominal," #pm ")
   ).c_str());
-  lbl.DrawLatex(lxmin,0.30,cat(
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
     "#phi_{CB} = ",
     make_pair(stats["fcb_bin0"].nominal," #pm ")
   ).c_str());
-  lbl.DrawLatex(lxmin,0.24,cat(
+  
+  lbl.DrawLatex(lxmin,ly-=0.10,cat(
     "FWHM_{ fit} = ",
     setprecision(3), stats["FWHM"].nominal.val,
     " [GeV]"
+  ).c_str());
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
+    "68% : (",
+    fixed, setprecision(1),
+    ltailx(f_nominal,0.16), ',', rtailx(f_nominal,0.16),
+    ") [GeV]"
+  ).c_str());
+  lbl.DrawLatex(lxmin,ly-=0.05,cat(
+    "90% : (",
+    fixed, setprecision(1),
+    ltailx(f_nominal,0.05), ',', rtailx(f_nominal,0.05),
+    ") [GeV]"
   ).c_str());
 
   canv.SaveAs(argv[2]);
