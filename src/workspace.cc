@@ -74,7 +74,8 @@ std::pair<FitResult,TGraph*> workspace::fit(TH1* hist) const {
   sim_pdf->plotOn(frame,
     RooFit::LineColor(85),
     RooFit::Slice(*rcat, bg ? "data_bin0" : "mc_125"),
-    RooFit::ProjWData(RooArgSet(*rcat), crdh)
+    RooFit::ProjWData(RooArgSet(*rcat), crdh),
+    RooFit::Precision(1e-5)
   );
   auto *curve = frame->getCurve();
   // frame->Draw("same");

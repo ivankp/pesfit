@@ -50,19 +50,8 @@ int main(int argc, char** argv)
     tree->GetEntry(0);
   }
 
-  TH1
-    *h_nominal    = get<TH1>(fin,"nominal");
-    // *h_scale_down = get<TH1>(fin,"scale_down"),
-    // *h_scale_up   = get<TH1>(fin,"scale_up"),
-    // *h_res_down   = get<TH1>(fin,"res_down"),
-    // *h_res_up     = get<TH1>(fin,"res_up");
-
-  TGraph
-    *f_nominal    = get<TGraph>(fin,"nominal_fit");
-    // *f_scale_down = get<TGraph>(fin,"scale_down_fit"),
-    // *f_scale_up   = get<TGraph>(fin,"scale_up_fit"),
-    // *f_res_down   = get<TGraph>(fin,"res_down_fit"),
-    // *f_res_up     = get<TGraph>(fin,"res_up_fit");
+  TH1    *h_nominal = get<TH1>   (fin,"nominal");
+  TGraph *f_nominal = get<TGraph>(fin,"nominal_fit");
 
   // DRAW ************************************************
 
