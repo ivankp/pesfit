@@ -34,6 +34,7 @@ public:
   inline RooWorkspace* operator->() noexcept { return ws; }
 
   void setRange(const char* name, Double_t min, Double_t max);
+  void fixVal(const char* name, Double_t val);
 
   std::pair<FitResult,TGraph*> fit(TH1* hist) const;
 };

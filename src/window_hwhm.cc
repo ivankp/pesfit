@@ -42,7 +42,7 @@ Double_t exp2(const Double_t* x, const Double_t* p) noexcept {
 int main(int argc, char** argv)
 {
   string ifname, ofname, wfname, cfname;
-  bool logy, bg;
+  bool logy, bg, dopull;
 
   // options ---------------------------------------------------
   try {
@@ -61,6 +61,8 @@ int main(int argc, char** argv)
        "logarithmic Y axis")
       ("bg,b", po::bool_switch(&bg),
        "add exp2 background to signal")
+      ("pull,p", po::bool_switch(&dopull),
+       "calculate fit pulls")
     ;
 
     po::positional_options_description pos;
@@ -117,7 +119,7 @@ int main(int argc, char** argv)
     *f_res_up     = get<TGraph>(fin,"res_up_fit");
 
   workspace ws(wfname,bg);
-  
+
   if (bg) { // add background
     Double_t params[2] = { -3.4472e+00, 4.6032e-01 };
     TF1 fexp2("exp2",exp2,105,140,2);
@@ -128,21 +130,27 @@ int main(int argc, char** argv)
       h_nominal->GetXaxis()->GetXmin(),
       h_nominal->GetXaxis()->GetXmax());
     h_bg->Eval(&fexp2);
-    h_bg->Scale(
-      (24740./h_bg->Integral()) * (h_nominal->Integral()/124.84)
-    );
-    
+    h_bg->Scale(24740./h_bg->Integral());
+
+    auto& nsig_mc = stats["nsig_mc"];
+    const double scale_to_nsig_nom
+      = (nsig_mc.nominal = 124.84)/h_nominal->Integral();
+
+    h_scale_down->Scale(scale_to_nsig_nom);
+    h_scale_up  ->Scale(scale_to_nsig_nom);
+    h_res_down  ->Scale(scale_to_nsig_nom);
+    h_res_up    ->Scale(scale_to_nsig_nom);
+
+    nsig_mc.scale_down = h_scale_down->Integral();
+    nsig_mc.scale_up   = h_scale_up  ->Integral();
+    nsig_mc.res_down   = h_res_down  ->Integral();
+    nsig_mc.res_up     = h_res_up    ->Integral();
+
     h_scale_down->Add(h_bg);
     h_scale_up  ->Add(h_bg);
     h_res_down  ->Add(h_bg);
     h_res_up    ->Add(h_bg);
   }
-
-  auto fix = [&ws](const char* name, double x){
-    auto *var = ws->var(name);
-    var->setRange(x,x);
-    var->setVal(x);
-  };
 
   TCanvas canv;
   canv.SetMargin(0.1,0.04,0.1,0.1);
@@ -164,32 +172,127 @@ int main(int argc, char** argv)
 
   h_scale_down->SetTitle("Unconstrained fit");
   h_scale_down->Draw();
-  f_scale_down->Draw("same");
   h_scale_up->Draw("same");
-  f_scale_up->Draw("same");
 
-  draw_stat(h_scale_down,0.84,stats["mean_offset_bin0"].scale_down);
-  draw_stat(h_scale_up  ,0.80,stats["mean_offset_bin0"].scale_up  );
+  if (bg) {
+    lbl.DrawLatex(0.62,0.85,"NSig_fit");
+    lbl.DrawLatex(0.73,0.85,"pull");
+    lbl.DrawLatex(0.84,0.85,"rel_diff");
+
+    const auto& nsig_mc_stat = stats["nsig_mc"];
+
+    auto fit = ws.fit(h_scale_down);
+    fit.second->Draw("same");
+    Double_t nsig = static_cast<RooRealVar*>(
+      fit.first->floatParsFinal().find("NSig_bin0")
+    )->getVal();
+    Double_t rel_diff = (nsig - nsig_mc_stat.scale_down) / nsig_mc_stat.scale_down;
+    Double_t pull = NAN;
+    if (dopull) {
+      pull = static_cast<RooRealVar*>(
+        fit.first->floatParsFinal().find("Uncert_EnRes_EnRes")
+      )->getVal();
+    }
+
+    auto lblp = lbl.DrawLatex(0.45,0.80,"scale_down");
+    lblp->SetTextColor(h_scale_down->GetLineColor());
+    lblp->DrawLatex(0.62,0.80,Form("%.2f",nsig));
+    lblp->DrawLatex(0.73,0.80,Form("%.3f",pull));
+    lblp->DrawLatex(0.84,0.80,Form("%.5f",rel_diff));
+
+    fit = ws.fit(h_scale_up);
+    fit.second->Draw("same");
+    nsig = static_cast<RooRealVar*>(
+      fit.first->floatParsFinal().find("NSig_bin0")
+    )->getVal();
+    rel_diff = (nsig - nsig_mc_stat.scale_up) / nsig_mc_stat.scale_up;
+    if (dopull) {
+      pull = static_cast<RooRealVar*>(
+        fit.first->floatParsFinal().find("Uncert_EnRes_EnRes")
+      )->getVal();
+    }
+
+    lblp = lbl.DrawLatex(0.45,0.75,"scale_up");
+    lblp->SetTextColor(h_scale_up->GetLineColor());
+    lblp->DrawLatex(0.62,0.75,Form("%.2f",nsig));
+    lblp->DrawLatex(0.73,0.75,Form("%.3f",pull));
+    lblp->DrawLatex(0.84,0.75,Form("%.5f",rel_diff));
+  } else {
+    f_scale_down->Draw("same");
+    f_scale_up->Draw("same");
+    draw_stat(h_scale_down,0.84,stats["mean_offset_bin0"].scale_down);
+    draw_stat(h_scale_up  ,0.80,stats["mean_offset_bin0"].scale_up  );
+  }
 
   canv.SaveAs(ofname.c_str());
 
-  h_scale_down->SetTitle("Mean offset set to window mean - 125");
-  fix("mean_offset_bin0", stats["hist_window_mean"].scale_down - 125.);
-  auto fit_res = ws.fit(h_scale_down);
+  if (bg) h_scale_down->SetTitle("Should be exactly the same as previous");
+  else h_scale_down->SetTitle("Mean offset set to window mean - 125");
+  ws.fixVal("mean_offset_bin0", stats["hist_window_mean"].scale_down - 125.);
+  auto fit = ws.fit(h_scale_down);
+
+  test(fit.first->GetName())
+  auto& pars = fit.first->floatParsFinal();
+  for (int i=0, n=pars.getSize(); i<n; ++i)
+    test(pars[i].GetName())
+
   h_scale_down->Draw();
-  fit_res.second->Draw("same");
-  draw_stat(h_scale_down,0.84,
+  fit.second->Draw("same");
+
+  if (bg) {
+    lbl.DrawLatex(0.62,0.85,"NSig_fit");
+    lbl.DrawLatex(0.73,0.85,"pull");
+    lbl.DrawLatex(0.84,0.85,"rel_diff");
+
+    const auto& nsig_mc_stat = stats["nsig_mc"];
+
+    Double_t nsig = static_cast<RooRealVar*>(
+      fit.first->floatParsFinal().find("NSig_bin0")
+    )->getVal();
+    Double_t rel_diff = (nsig - nsig_mc_stat.scale_down) / nsig_mc_stat.scale_down;
+    Double_t pull = NAN;
+    if (dopull) {
+      pull = static_cast<RooRealVar*>(
+        fit.first->floatParsFinal().find("Uncert_EnRes_EnRes")
+      )->getVal();
+    }
+
+    auto lblp = lbl.DrawLatex(0.45,0.80,"scale_down");
+    lblp->SetTextColor(h_scale_down->GetLineColor());
+    lblp->DrawLatex(0.62,0.80,Form("%.2f",nsig));
+    lblp->DrawLatex(0.73,0.80,Form("%.3f",pull));
+    lblp->DrawLatex(0.84,0.80,Form("%.5f",rel_diff));
+  } else draw_stat(h_scale_down,0.84,
     static_cast<RooRealVar*>(
-      fit_res.first->floatParsFinal().find("mean_offset_bin0")
+      fit.first->floatParsFinal().find("mean_offset_bin0")
     )->getVal());
 
-  fix("mean_offset_bin0", stats["hist_window_mean"].scale_up - 125.);
-  fit_res = ws.fit(h_scale_up);
+  ws.fixVal("mean_offset_bin0", stats["hist_window_mean"].scale_up - 125.);
+  fit = ws.fit(h_scale_up);
   h_scale_up->Draw("same");
-  fit_res.second->Draw("same");
-  draw_stat(h_scale_up,0.80,
+  fit.second->Draw("same");
+  if (bg) {
+    const auto& nsig_mc_stat = stats["nsig_mc"];
+
+    Double_t nsig = static_cast<RooRealVar*>(
+      fit.first->floatParsFinal().find("NSig_bin0")
+    )->getVal();
+    Double_t rel_diff = (nsig - nsig_mc_stat.scale_up) / nsig_mc_stat.scale_up;
+    Double_t pull = NAN;
+    if (dopull) {
+      pull = static_cast<RooRealVar*>(
+        fit.first->floatParsFinal().find("Uncert_EnRes_EnRes")
+      )->getVal();
+    }
+
+    auto lblp = lbl.DrawLatex(0.45,0.75,"scale_up");
+    lblp->SetTextColor(h_scale_up->GetLineColor());
+    lblp->DrawLatex(0.62,0.75,Form("%.2f",nsig));
+    lblp->DrawLatex(0.73,0.75,Form("%.3f",pull));
+    lblp->DrawLatex(0.84,0.75,Form("%.5f",rel_diff));
+  } else draw_stat(h_scale_up,0.80,
     static_cast<RooRealVar*>(
-      fit_res.first->floatParsFinal().find("mean_offset_bin0")
+      fit.first->floatParsFinal().find("mean_offset_bin0")
     )->getVal());
 
   canv.SaveAs(ofname.c_str());
@@ -198,32 +301,120 @@ int main(int argc, char** argv)
 
   h_res_down->SetTitle("Unconstrained fit");
   h_res_down->Draw();
-  f_res_down->Draw("same");
   h_res_up->Draw("same");
-  f_res_up->Draw("same");
 
-  draw_stat(h_res_down,0.84,stats["sigma_offset_bin0"].res_down);
-  draw_stat(h_res_up  ,0.80,stats["sigma_offset_bin0"].res_up  );
+  if (bg) {
+    lbl.DrawLatex(0.62,0.85,"NSig_fit");
+    lbl.DrawLatex(0.73,0.85,"pull");
+    lbl.DrawLatex(0.84,0.85,"rel_diff");
+
+    const auto& nsig_mc_stat = stats["nsig_mc"];
+
+    auto fit = ws.fit(h_res_down);
+    fit.second->Draw("same");
+    Double_t nsig = static_cast<RooRealVar*>(
+      fit.first->floatParsFinal().find("NSig_bin0")
+    )->getVal();
+    Double_t rel_diff = (nsig - nsig_mc_stat.res_down) / nsig_mc_stat.res_down;
+    Double_t pull = NAN;
+    if (dopull) {
+      pull = static_cast<RooRealVar*>(
+        fit.first->floatParsFinal().find("Uncert_EnRes_EnRes")
+      )->getVal();
+    }
+
+    auto lblp = lbl.DrawLatex(0.45,0.80,"res_down");
+    lblp->SetTextColor(h_res_down->GetLineColor());
+    lblp->DrawLatex(0.62,0.80,Form("%.2f",nsig));
+    lblp->DrawLatex(0.73,0.80,Form("%.3f",pull));
+    lblp->DrawLatex(0.84,0.80,Form("%.5f",rel_diff));
+
+    fit = ws.fit(h_res_up);
+    fit.second->Draw("same");
+    nsig = static_cast<RooRealVar*>(
+      fit.first->floatParsFinal().find("NSig_bin0")
+    )->getVal();
+    rel_diff = (nsig - nsig_mc_stat.res_up) / nsig_mc_stat.res_up;
+    if (dopull) {
+      pull = static_cast<RooRealVar*>(
+        fit.first->floatParsFinal().find("Uncert_EnRes_EnRes")
+      )->getVal();
+    }
+
+    lblp = lbl.DrawLatex(0.45,0.75,"res_up");
+    lblp->SetTextColor(h_res_up->GetLineColor());
+    lblp->DrawLatex(0.62,0.75,Form("%.2f",nsig));
+    lblp->DrawLatex(0.73,0.75,Form("%.3f",pull));
+    lblp->DrawLatex(0.84,0.75,Form("%.5f",rel_diff));
+  } else {
+    f_res_down->Draw("same");
+    f_res_up->Draw("same");
+    draw_stat(h_res_down,0.84,stats["sigma_offset_bin0"].res_down);
+    draw_stat(h_res_up  ,0.80,stats["sigma_offset_bin0"].res_up  );
+  }
 
   canv.SaveAs(ofname.c_str());
 
-  h_res_down->SetTitle("Sigma offset set to HWHM");
-  fix("sigma_offset_bin0", stats["FWHM"].res_down/2.);
-  fit_res = ws.fit(h_res_down);
+  if (bg) h_res_down->SetTitle("Should be exactly the same as previous");
+  else h_res_down->SetTitle("Sigma offset set to HWHM");
+  ws.fixVal("sigma_offset_bin0", stats["FWHM"].res_down/2.);
+  fit = ws.fit(h_res_down);
   h_res_down->Draw();
-  fit_res.second->Draw("same");
-  draw_stat(h_res_down,0.84,
+  fit.second->Draw("same");
+  if (bg) {
+    lbl.DrawLatex(0.62,0.85,"NSig_fit");
+    lbl.DrawLatex(0.73,0.85,"pull");
+    lbl.DrawLatex(0.84,0.85,"rel_diff");
+
+    const auto& nsig_mc_stat = stats["nsig_mc"];
+
+    Double_t nsig = static_cast<RooRealVar*>(
+      fit.first->floatParsFinal().find("NSig_bin0")
+    )->getVal();
+    Double_t rel_diff = (nsig - nsig_mc_stat.res_down) / nsig_mc_stat.res_down;
+    Double_t pull = NAN;
+    if (dopull) {
+      pull = static_cast<RooRealVar*>(
+        fit.first->floatParsFinal().find("Uncert_EnRes_EnRes")
+      )->getVal();
+    }
+
+    auto lblp = lbl.DrawLatex(0.45,0.80,"res_down");
+    lblp->SetTextColor(h_res_down->GetLineColor());
+    lblp->DrawLatex(0.62,0.80,Form("%.2f",nsig));
+    lblp->DrawLatex(0.73,0.80,Form("%.3f",pull));
+    lblp->DrawLatex(0.84,0.80,Form("%.5f",rel_diff));
+  } else draw_stat(h_res_down,0.84,
     static_cast<RooRealVar*>(
-      fit_res.first->floatParsFinal().find("sigma_offset_bin0")
+      fit.first->floatParsFinal().find("sigma_offset_bin0")
     )->getVal());
 
-  fix("sigma_offset_bin0", stats["FWHM"].res_up/2.);
-  fit_res = ws.fit(h_res_up);
+  ws.fixVal("sigma_offset_bin0", stats["FWHM"].res_up/2.);
+  fit = ws.fit(h_res_up);
   h_res_up->Draw("same");
-  fit_res.second->Draw("same");
-  draw_stat(h_res_up,0.80,
+  fit.second->Draw("same");
+  if (bg) {
+    const auto& nsig_mc_stat = stats["nsig_mc"];
+
+    Double_t nsig = static_cast<RooRealVar*>(
+      fit.first->floatParsFinal().find("NSig_bin0")
+    )->getVal();
+    Double_t rel_diff = (nsig - nsig_mc_stat.res_up) / nsig_mc_stat.res_up;
+    Double_t pull = NAN;
+    if (dopull) {
+      pull = static_cast<RooRealVar*>(
+        fit.first->floatParsFinal().find("Uncert_EnRes_EnRes")
+      )->getVal();
+    }
+
+    auto lblp = lbl.DrawLatex(0.45,0.75,"res_up");
+    lblp->SetTextColor(h_res_up->GetLineColor());
+    lblp->DrawLatex(0.62,0.75,Form("%.2f",nsig));
+    lblp->DrawLatex(0.73,0.75,Form("%.3f",pull));
+    lblp->DrawLatex(0.84,0.75,Form("%.5f",rel_diff));
+  } else draw_stat(h_res_up,0.80,
     static_cast<RooRealVar*>(
-      fit_res.first->floatParsFinal().find("sigma_offset_bin0")
+      fit.first->floatParsFinal().find("sigma_offset_bin0")
     )->getVal());
 
   canv.SaveAs(ofname.c_str());

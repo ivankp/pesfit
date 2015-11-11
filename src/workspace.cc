@@ -36,7 +36,13 @@ void workspace::setRange(const char* name, Double_t min, Double_t max) {
   ws->var(name)->setRange(min,max);
 }
 
-std::pair<FitResult,TGraph*> workspace::fit(TH1* hist) const {
+void workspace::fixVal(const char* name, Double_t val) {
+  auto *var = ws->var(name);
+  var->setRange(val,val);
+  var->setVal(val);
+}
+
+auto workspace::fit(TH1* hist) const -> std::pair<FitResult,TGraph*> {
   // Produce a RooDataHist object from the TH1
   RooDataHist rdh("dh","dh",RooArgSet(*myy),hist);
 
@@ -62,7 +68,7 @@ std::pair<FitResult,TGraph*> workspace::fit(TH1* hist) const {
     RooFit::NumCPU(4),
     RooFit::Minimizer("Minuit2"),
     RooFit::Offset(true),
-    RooFit::Strategy(bg ? 0 : 2)
+    RooFit::Strategy(2)
   );
 
   RooPlot *frame = myy->frame();

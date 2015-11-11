@@ -1,7 +1,7 @@
 CC  := gcc
 CXX := g++
 
-CXXFLAGS := -std=c++11 -Wall -O3
+CXXFLAGS := -std=c++11 -Wall -g
 
 LIBS := -lboost_program_options
 
