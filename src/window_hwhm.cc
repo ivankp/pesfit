@@ -7,7 +7,6 @@
 #include <TFile.h>
 #include <TTree.h>
 #include <TH1.h>
-#include <TH2.h>
 #include <TF1.h>
 #include <TGraph.h>
 #include <TStyle.h>

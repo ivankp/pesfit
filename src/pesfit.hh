@@ -35,6 +35,7 @@
 #include <RooPlot.h>
 #include <RooCurve.h>
 
+#include "regex.hh"
 #include "catstr.hh"
 #include "senum.hh"
 #include "seqmap.hh"
@@ -61,25 +62,6 @@ using std::scientific;
 using std::setprecision;
 using std::fixed;
 namespace po = boost::program_options;
-
-#define GCC_VERSION (__GNUC__ * 10000 \
-                              + __GNUC_MINOR__ * 100 \
-                              + __GNUC_PATCHLEVEL__)
-
-#if GCC_VERSION < 40900 // Test for GCC < 4.9.0
-#include <boost/regex.hpp>
-using boost::regex;
-using boost::smatch;
-using boost::regex_match;
-#define regex_icase boost::regex::icase
-#else
-#include <regex>
-using std::regex;
-using std::smatch;
-using std::regex_match;
-using std::regex_constants::icase;
-#define regex_icase std::regex_constants::icase
-#endif
 
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;

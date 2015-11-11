@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# Developed by Ivan Pogrebnyak, MSU
+
+tmp="/tmp/gs_`date +%s`.pdf"
+gs -o $tmp -dPDFSETTINGS=/prepress -sDEVICE=pdfwrite $1
+mv $tmp $1

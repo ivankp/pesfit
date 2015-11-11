@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <stdexcept>
 
 #include <TFile.h>
 #include <TTree.h>
@@ -12,20 +13,16 @@
 #include <TLatex.h>
 #include <TLegend.h>
 
+#include "regex.hh"
 #include "catstr.hh"
-#include "structmap.hh"
-#include "seqmap.hh"
 #include "root_safe_get.hh"
-#include "val_err.hh"
 #include "TGraph_fcns.hh"
+#include "binned.hh"
 
 using namespace std;
 
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
-
-structmap(val_err<double>,hist_t,
-  (nominal)(scale_down)(scale_up)(res_down)(res_up));
 
 int main(int argc, char** argv)
 {
@@ -34,9 +31,19 @@ int main(int argc, char** argv)
     return 0;
   }
 
+  binned<TH1*> hmap({0,5,10,15,20,25,30});
+
+  for (size_t i=1, n=hmap.nbins(); i<=n; ++i)
+    hmap.at(i) = new TH1D(
+      cat("m_yy_nvert[",hmap.left_edge(i),',',hmap.right_edge(i),')').c_str(),
+      ";m_{#gamma#gamma} [GeV];",100,105,140);
+
+  for (TH1 *h : hmap) cout << h->GetName() << endl;
+
   TFile *fin = new TFile(argv[1],"read");
   if (fin->IsZombie()) return 1;
 
+/*
   seqmap<hist_t> stats;
   {
     TTree *tree = get<TTree>(fin,"stats");
@@ -155,6 +162,7 @@ int main(int argc, char** argv)
   canv.SaveAs(argv[2]);
 
   canv.SaveAs(cat(argv[2],']').c_str());
+  */
 
   delete fin;
   return 0;
