@@ -8,10 +8,6 @@
 #include <utility>
 #include <cmath>
 
-#include <iostream>
-#define test(var) \
-  std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
-
 class golden_min {
   const double tol;
 
