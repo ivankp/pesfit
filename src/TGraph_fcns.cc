@@ -110,7 +110,7 @@ Double_t ltailx(const TGraph* gr, Double_t frac) noexcept {
       Double_t b = y2 - a*x2;
       Double_t c = (integral - intfrac) - (b + y1)*x1;
       b += (y1 - a*x1);
-      x2 = ( sqrt(b*b-4.*a*c)-b)/(2.*a);
+      x2 = (sqrt(b*b-4.*a*c)-b)/(2.*a);
       break;
     } else {
       integral += part;
@@ -122,6 +122,27 @@ Double_t ltailx(const TGraph* gr, Double_t frac) noexcept {
 }
 
 Double_t rtailx(const TGraph* gr, Double_t frac) noexcept {
-  return 0;
+  const int n = gr->GetN();
+  const Double_t intfrac = fint(gr,0,n-1)*2*frac;
+  Double_t integral = 0.;
+  Double_t x1, x2, y1, y2;
+  gr->GetPoint(n-1, x2, y2);
+  for (int i=n-2; i>=0; --i) {
+    gr->GetPoint(i, x1, y1);
+    Double_t part = (x2-x1)*(y2+y1);
+    if (integral+part > intfrac) {
+      Double_t a = (y1-y2)/(x2-x1);
+      Double_t b = y2 + a*x2;
+      Double_t c = (integral - intfrac) + (y2 + b)*x2;
+      b += (y2 + a*x2);
+      x1 = (-sqrt(b*b-4.*a*c)+b)/(2.*a);
+      break;
+    } else {
+      integral += part;
+      x2 = x1;
+      y2 = y1;
+    }
+  }
+  return x1;
 }
 
