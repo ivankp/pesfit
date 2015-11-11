@@ -54,6 +54,8 @@ inline Double_t get_FWHM(const TGraph* gr) noexcept {
 
 void make_hist(TH1*& hist, const char* name, const string& proc,
                double scale, const char* branch) {
+  if (!tree->GetListOfBranches()->Contains(branch)) return;
+
   const string cmd1(cat(
     branch,"/1000>>hist(",nbins,",",xrange.first,",",xrange.second,")"));
   const string cmd2(
@@ -83,6 +85,8 @@ vector<FitResult> fit(const initializer_list<TH1*>& hs) {
   Color_t color;
   for (auto it=hs.begin(), end=hs.end(); it!=end; ++it) {
     TH1 *hist = *it;
+    if (!hist) continue;
+
     const char *name = hist->GetName();
     hist->SetStats(false);
     hist->SetLineWidth(2);
@@ -161,16 +165,6 @@ vector<FitResult> fit(const initializer_list<TH1*>& hs) {
           alpha->setRange(alpha->getVal(),alpha->getVal());
         }
 
-/*
-        auto Nsig = static_cast<RooRealVar*>(
-          fit_res->floatParsFinal().find("NSig_bin0")
-        );
-        const double Nsig_rat = Nsig->getVal()/Nsig->getError();
-        hstat["p0"] = Nsig_rat > 0 ?
-                      0.5*TMath::Prob( sq(Nsig_rat) , 1.) :
-                      1 - 0.5*TMath::Prob( sq(Nsig_rat) , 1.);
-*/
-
       res.emplace_back(move(fit_res.first));
 
       break; }
@@ -186,7 +180,7 @@ vector<FitResult> fit(const initializer_list<TH1*>& hs) {
         cat(fixed,setprecision(2),stdev).c_str());
     }
   }
-  if (out_==Out::pdf) canv->SaveAs(ofname.c_str());
+  if (out_==Out::pdf) if (i) canv->SaveAs(ofname.c_str());
 
   return res;
 }
@@ -272,7 +266,7 @@ int main(int argc, char** argv)
     cout << "Data file: " << f << endl;
     tree = get<TTree>(file,"CollectionTree");
 
-    const size_t slash = f.find('/')+1;
+    const size_t slash = f.rfind('/')+1;
     const double xsecscale = 1./get<TH1>(file,
       ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
     )->GetBinContent(3);
@@ -388,7 +382,7 @@ int main(int argc, char** argv)
   }
   // ****************************************************************
 
-  if (fit_==Fit::cb) {
+  if (fit_==Fit::cb && out_==Out::pdf) {
     double scale      = stats["nominal"   ]["mean_offset_bin0"].val;
     double scale_down = stats["scale_down"]["mean_offset_bin0"].val;
     double scale_up   = stats["scale_up"  ]["mean_offset_bin0"].val;
@@ -417,60 +411,58 @@ int main(int argc, char** argv)
            fwhm_up    = fwhm_up   - fwhm;
     double fwhm_sym   = (fwhm_up-fwhm_down)/2;
 
-    if (out_==Out::pdf) {
-      canv->Clear();
-      vector<unique_ptr<TPaveText>> txt;
-      txt.reserve(6);
-      for (int i=0; i<6; ++i) {
-        TPaveText *pt;
-        txt.emplace_back(pt = new TPaveText(i/6.,0.,(i+1)/6.,1.,"NBNDC"));
-        pt->SetFillColor(0);
-      }
-
-      txt[0]->AddText("[GeV]");
-      txt[1]->AddText("Scale");
-      txt[2]->AddText("Window");
-      txt[3]->AddText("Resolution");
-      txt[4]->AddText("HWHM");
-      txt[5]->AddText("FWHM/FWHM_{nom}");
-
-      txt[0]->AddText("Nominal");
-      txt[1]->AddText(Form("%.3f",scale));
-      txt[2]->AddText(Form("%.3f",win));
-      txt[3]->AddText(Form("%.3f",res));
-      txt[4]->AddText(Form("%.3f",fwhm/2));
-      txt[5]->AddText("1");
-
-      txt[0]->AddText("Variation");
-      txt[1]->AddText(Form("%.3f, +%.3f",scale_down,scale_up));
-      txt[2]->AddText(Form("%.3f, +%.3f",win_down,win_up));
-      txt[3]->AddText(Form("%.3f, +%.3f",res_down,res_up));
-      txt[4]->AddText(Form("%.3f, +%.3f",fwhm_down/2,fwhm_up/2));
-      txt[5]->AddText(Form("%.3f, +%.3f",fwhm_down/fwhm,fwhm_up/fwhm));
-
-      txt[0]->AddText("Average Variation");
-      txt[1]->AddText(Form("#pm %.3f",scale_sym));
-      txt[2]->AddText(Form("#pm %.3f",win_sym));
-      txt[3]->AddText(Form("#pm %.3f",res_sym));
-      txt[4]->AddText(Form("#pm %.3f",fwhm_sym/2));
-      txt[5]->AddText(Form("#pm %.3f",fwhm_sym/fwhm));
-
-      TLine *line = new TLine();
-
-      for (int i=0; i<6; ++i) {
-        txt[i]->Draw();
-        if (i) line->DrawLineNDC(i/6.,0.,i/6.,1.);
-      }
-      for (int i=1; i<4; ++i) line->DrawLineNDC(0.,i/4.,1.,i/4.);
-      canv->SaveAs(ofname.c_str());
+    canv->Clear();
+    vector<unique_ptr<TPaveText>> txt;
+    txt.reserve(6);
+    for (int i=0; i<6; ++i) {
+      TPaveText *pt;
+      txt.emplace_back(pt = new TPaveText(i/6.,0.,(i+1)/6.,1.,"NBNDC"));
+      pt->SetFillColor(0);
     }
+
+    txt[0]->AddText("[GeV]");
+    txt[1]->AddText("Scale");
+    txt[2]->AddText("Window");
+    txt[3]->AddText("Resolution");
+    txt[4]->AddText("HWHM");
+    txt[5]->AddText("FWHM/FWHM_{nom}");
+
+    txt[0]->AddText("Nominal");
+    txt[1]->AddText(Form("%.3f",scale));
+    txt[2]->AddText(Form("%.3f",win));
+    txt[3]->AddText(Form("%.3f",res));
+    txt[4]->AddText(Form("%.3f",fwhm/2));
+    txt[5]->AddText("1");
+
+    txt[0]->AddText("Variation");
+    txt[1]->AddText(Form("%.3f, +%.3f",scale_down,scale_up));
+    txt[2]->AddText(Form("%.3f, +%.3f",win_down,win_up));
+    txt[3]->AddText(Form("%.3f, +%.3f",res_down,res_up));
+    txt[4]->AddText(Form("%.3f, +%.3f",fwhm_down/2,fwhm_up/2));
+    txt[5]->AddText(Form("%.3f, +%.3f",fwhm_down/fwhm,fwhm_up/fwhm));
+
+    txt[0]->AddText("Average Variation");
+    txt[1]->AddText(Form("#pm %.3f",scale_sym));
+    txt[2]->AddText(Form("#pm %.3f",win_sym));
+    txt[3]->AddText(Form("#pm %.3f",res_sym));
+    txt[4]->AddText(Form("#pm %.3f",fwhm_sym/2));
+    txt[5]->AddText(Form("#pm %.3f",fwhm_sym/fwhm));
+
+    TLine *line = new TLine();
+
+    for (int i=0; i<6; ++i) {
+      txt[i]->Draw();
+      if (i) line->DrawLineNDC(i/6.,0.,i/6.,1.);
+    }
+    for (int i=1; i<4; ++i) line->DrawLineNDC(0.,i/4.,1.,i/4.);
+    canv->SaveAs(ofname.c_str());
   }
 
   if (out_==Out::root) {
     ofile->cd();
     TTree *tree = new TTree("stats","stats");
 
-    structmap(double,hist_t,
+    structmap(val_err<double>,hist_t,
       (nominal)(scale_down)(scale_up)(res_down)(res_up));
 
     seqmap<hist_t> tstats;
@@ -480,7 +472,7 @@ int main(int argc, char** argv)
 
     for (auto& stat : tstats)
       tree->Branch(stat.first.c_str(), &stat.second,
-        "nominal/D:scale_down/D:scale_up/D:res_down/D:res_up/D");
+        "nominal[2]/D:scale_down[2]/D:scale_up[2]/D:res_down[2]/D:res_up[2]/D");
 
     tree->Fill();
   }
