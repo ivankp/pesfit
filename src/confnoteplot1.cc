@@ -18,6 +18,7 @@
 #include "root_safe_get.hh"
 #include "val_err.hh"
 #include "TGraph_fcns.hh"
+#include "golden_min.hh"
 
 using namespace std;
 
@@ -26,11 +27,11 @@ using namespace std;
 
 structmap(val_err<double>,hist_t,
   (nominal)(scale_down)(scale_up)(res_down)(res_up));
-
+  
 int main(int argc, char** argv)
 {
-  if (argc!=3) {
-    cout << "usage: " << argv[0] << " in.root out.pdf" << endl;
+  if (argc!=3 && argc!=4) {
+    cout << "usage: " << argv[0] << " in.root out.pdf [minsig]" << endl;
     return 0;
   }
 
@@ -43,7 +44,7 @@ int main(int argc, char** argv)
     auto *branches = tree->GetListOfBranches();
     stats.reserve(branches->GetEntries());
     for (auto x : *branches) {
-      cout << "Branch: " << x->GetName() << endl;
+      //cout << "Branch: " << x->GetName() << endl;
       tree->SetBranchAddress(x->GetName(),&stats[x->GetName()]);
     }
     tree->GetEntry(0);
@@ -58,7 +59,6 @@ int main(int argc, char** argv)
   canv.SetMargin(0.07,0.04,0.1,0.02);
   // canv.SetLogy();
   canv.SetTicks();
-  canv.SaveAs(cat(argv[2],'[').c_str());
 
   TLatex lbl;
   lbl.SetTextFont(43);
@@ -139,22 +139,44 @@ int main(int argc, char** argv)
     setprecision(3), stats["FWHM"].nominal.val,
     " [GeV]"
   ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "68% : (",
-    fixed, setprecision(1),
-    ltailx(f_nominal,0.16), ',', rtailx(f_nominal,0.16),
-    ") [GeV]"
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "90% : (",
-    fixed, setprecision(1),
-    ltailx(f_nominal,0.05), ',', rtailx(f_nominal,0.05),
-    ") [GeV]"
-  ).c_str());
+  
+  const Double_t integral = integrate(f_nominal);
+  
+  if (argc==4 && string("minsig")==argv[3]) {
+    golden_min gm;
+    
+    for (auto frac : {0.68,0.90}) {
+      test(frac)
+      auto x1 = gm( [f_nominal,frac,integral](double x1) {
+        return intervalx2(f_nominal, frac, x1, integral) - x1;
+      }, firstx(f_nominal), rtailx(f_nominal,frac,integral) ).first;
+      auto x2 = intervalx2(f_nominal, frac, x1, integral);
+      cout << setprecision(6);
+      cout << "x1 = " << x1 << endl;
+      cout << "x2 = " << x2 << endl;
+      lbl.DrawLatex(lxmin,ly-=0.05,cat(
+        frac*100,"% : (",
+        fixed, setprecision(2),
+        x1, ',', x2,
+        ") [GeV]"
+      ).c_str());
+    }
+  } else {
+    lbl.DrawLatex(lxmin,ly-=0.05,cat(
+      "68% : (",
+      fixed, setprecision(2),
+      ltailx(f_nominal,0.16,integral), ',', rtailx(f_nominal,0.16,integral),
+      ") [GeV]"
+    ).c_str());
+    lbl.DrawLatex(lxmin,ly-=0.05,cat(
+      "90% : (",
+      fixed, setprecision(2),
+      ltailx(f_nominal,0.05,integral), ',', rtailx(f_nominal,0.05,integral),
+      ") [GeV]"
+    ).c_str());
+  }
 
   canv.SaveAs(argv[2]);
-
-  canv.SaveAs(cat(argv[2],']').c_str());
 
   delete fin;
   return 0;
