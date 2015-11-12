@@ -1,7 +1,10 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <memory>
 #include <stdexcept>
+
+#include <boost/program_options.hpp>
 
 #include <TFile.h>
 #include <TTree.h>
@@ -18,152 +21,215 @@
 #include "root_safe_get.hh"
 #include "TGraph_fcns.hh"
 #include "binned.hh"
+#include "workspace.hh"
 
 using namespace std;
+namespace po = boost::program_options;
 
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
 
+template<typename T, typename ...Args>
+std::unique_ptr<T> make_unique( Args&& ...args ) {
+  return std::unique_ptr<T>( new T( std::forward<Args>(args)... ) );
+}
+
+namespace std {
+  template <typename T1, typename T2>
+  istream& operator>>(istream& in, pair<T1,T2>& p) {
+    string s;
+    in >> s;
+    size_t sep = s.find(':');
+    if (sep==string::npos) throw invalid_argument(
+      cat('\"',s,"\": pair values must be delimited by \':\'"));
+    stringstream (s.substr(0,sep)) >> p.first;
+    stringstream (s.substr(sep+1)) >> p.second;
+    return in;
+  }
+}
+
 int main(int argc, char** argv)
 {
-  if (argc!=3) {
-    cout << "usage: " << argv[0] << " in.root out.pdf" << endl;
-    return 0;
-  }
+  vector<string> ifname;
+  string ofname, wfname, cfname;
+  bool logy;
+  int nbins;
+  pair<double,double> xrange;
+  vector<Color_t> colors;
+  vector<pair<string,pair<double,double>>> new_ws_ranges;
 
-  binned<TH1*> hmap({0,5,10,15,20,25,30});
+  // options ---------------------------------------------------
+  try {
+    po::options_description desc("Options");
+    desc.add_options()
+      ("input,i", po::value(&ifname)->multitoken()->required(),
+       "*input root file names")
+      ("output,o", po::value(&ofname)->required(),
+       "*output pdf or root file name")
+      ("workspace,w", po::value(&wfname)->required(),
+       "ROOT file with RooWorkspace for CB fits")
+      ("config,c", po::value(&cfname),
+       "configuration file name")
 
-  for (size_t i=1, n=hmap.nbins(); i<=n; ++i)
-    hmap.at(i) = new TH1D(
-      cat("m_yy_nvert[",hmap.left_edge(i),',',hmap.right_edge(i),')').c_str(),
-      ";m_{#gamma#gamma} [GeV];",100,105,140);
+      ("logy,l", po::bool_switch(&logy),
+       "logarithmic Y axis")
+      ("nbins,n", po::value(&nbins)->default_value(100),
+       "histograms\' number of bins")
+      ("xrange,x", po::value(&xrange)->default_value({105,140},"105:140"),
+       "histograms\' X range")
+      ("colors", po::value(&colors)->multitoken()->
+        default_value(decltype(colors)({602,46}), "{602,46}"),
+       "histograms\' colors")
 
-  for (TH1 *h : hmap) cout << h->GetName() << endl;
+      ("ws-setRange", po::value(&new_ws_ranges),
+       "call RooWorkspace::setRange()")
+    ;
 
-  TFile *fin = new TFile(argv[1],"read");
-  if (fin->IsZombie()) return 1;
+    po::positional_options_description pos;
+    pos.add("input",-1);
 
-/*
-  seqmap<hist_t> stats;
-  {
-    TTree *tree = get<TTree>(fin,"stats");
-    auto *branches = tree->GetListOfBranches();
-    stats.reserve(branches->GetEntries());
-    for (auto x : *branches) {
-      cout << "Branch: " << x->GetName() << endl;
-      tree->SetBranchAddress(x->GetName(),&stats[x->GetName()]);
+    po::variables_map vm;
+    po::store(po::command_line_parser(argc, argv)
+      .options(desc).positional(pos).run(), vm);
+    if (argc == 1) {
+      cout << desc << endl;
+      return 0;
     }
-    tree->GetEntry(0);
+    if (vm.count("config")) {
+      po::store( po::parse_config_file<char>(
+        vm["config"].as<string>().c_str(), desc), vm);
+    }
+    po::notify(vm);
+
+    const string ofext = ofname.substr(ofname.rfind('.')+1);
+    if (ofext!="pdf") throw runtime_error(
+      "Output file extension "+ofext+" is not pdf"
+    );
+
+  } catch (exception& e) {
+    cerr << "\033[31mArgs: " <<  e.what() <<"\033[0m"<< endl;
+    return 1;
+  }
+  // end options ---------------------------------------------------
+
+  // Book histograms ************************************************
+  constexpr auto hist_types = {"selected"};
+  binned<vector<pair<TH1*,unique_ptr<TH1>>>>
+  hmap({0,5,10,15,20,25,30});
+
+  for (size_t i=1, n=hmap.nbins(); i<=n; ++i) {
+    static auto& hs = hmap.at(i);
+    hs.reserve(hist_types.size());
+    for (const auto *hist_type : hist_types) {
+      hs.emplace_back(
+        new TH1D( cat(
+          hist_type,"_m_yy_nvert[",hmap.left_edge(i),',',hmap.right_edge(i),')'
+        ).c_str(),
+        ";m_{#gamma#gamma} [GeV];d#sigma/dm_{#gamma#gamma} [fb/GeV]",
+        nbins,xrange.first,xrange.second),
+        make_unique<TH1D>("tmph","",nbins,xrange.first,xrange.second)
+      );
+      hs.back().second->SetDirectory(0);
+    }
   }
 
-  TH1    *h_nominal = get<TH1>   (fin,"nominal");
-  TGraph *f_nominal = get<TGraph>(fin,"nominal_fit");
+  cout << "Histograms:" << endl;
+  for (const auto& hs : hmap)
+    for (const auto& h : hs)
+      cout << "  " << h.first->GetName() << endl;
+  cout << endl;
 
-  // DRAW ************************************************
+  // LOOP over input files ******************************************
+  for (const string& f : ifname) {
+    TFile *file = new TFile(f.c_str(),"read");
+    if (file->IsZombie()) return 1;
+    cout << "Data file: " << f << endl;
+    TTree *tree = get<TTree>(file,"CollectionTree");
 
+    const size_t slash = f.rfind('/')+1;
+    const double xsecscale = 1000./get<TH1>(file,
+      ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
+    )->GetBinContent(3);
+
+    // Regex for process identification
+    static regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
+                         regex_icase);
+    smatch proc_match;
+    if (!regex_match(f, proc_match, proc_re))
+      throw runtime_error(cat("Filename \"",f,"\" does not specify process"));
+    const string proc(proc_match.str(1));
+
+    // protect from repeated processes
+    static unordered_set<string> procs;
+    if (!procs.emplace(proc).second)
+      throw runtime_error(cat("File \"",f,"\" repeats process ",proc));
+
+    // Branch variables
+    static vector<pair<Float_t,Int_t>> var(hist_types.size());
+    tree->SetBranchAddress(
+      "HGamEventInfoAuxDyn.m_yy",&var.at(0).first);
+    tree->SetBranchAddress(
+      "HGamEventInfoAuxDyn.numberOfPrimaryVertices",&var.at(0).second);
+
+    static Float_t crossSectionBRfilterEff, weight;
+    static Char_t isPassed;
+    tree->SetBranchAddress(
+      "HGamEventInfoAuxDyn.crossSectionBRfilterEff",&crossSectionBRfilterEff);
+    tree->SetBranchAddress(
+      "HGamEventInfoAuxDyn.weight",&weight);
+    tree->SetBranchAddress(
+      "HGamEventInfoAuxDyn.isPassed",&isPassed);
+
+    // LOOP over tree entries
+    for (Long64_t nent=tree->GetEntries(), ent=0; ent<nent; ++ent) {
+      tree->GetEntry(ent);
+
+      for (size_t i=0, n=hist_types.size(); i<n; ++i) {
+        auto& hist = hmap[var[i].second][i];
+        test( var[i].first )
+        test( var[i].second )
+        test( hist.first->GetName() )
+        hist.second->Fill(
+          var[i].first,
+          crossSectionBRfilterEff*weight*isPassed
+        );
+      }
+      if (ent==10) break;
+    }
+
+    // Add histograms
+    for (const auto& hs : hmap) {
+      for (const auto& h : hs) {
+        h.second->Scale(xsecscale/h.second->GetBinWidth(1));
+        h.first->Add(h.second.get());
+        h.second->Reset();
+      }
+    }
+
+    delete file;
+  }
+
+  // Fit functions **************************************************
+  workspace ws(wfname);
+
+  // Draw histograms ************************************************
   TCanvas canv;
-  canv.SetMargin(0.07,0.04,0.1,0.02);
-  // canv.SetLogy();
-  canv.SetTicks();
-  canv.SaveAs(cat(argv[2],'[').c_str());
 
-  TLatex lbl;
-  lbl.SetTextFont(43);
-  lbl.SetTextSize(18);
-  lbl.SetNDC();
+  canv.SaveAs((ofname+'[').c_str());
 
-  h_nominal->SetLineWidth(1);
-  h_nominal->SetLineColor(1);
-  h_nominal->SetMarkerColor(1);
-  h_nominal->GetYaxis()->SetTitleOffset(0.7);
-  h_nominal->SetMinimum(0);
+  for (const auto& hs : hmap) {
+    int i=0;
+    Color_t color;
+    for (const auto& h : hs) {
+      h.first->SetStats(false);
+      h.first->SetLineWidth(2);
+      h.first->SetLineColor(color = colors[(i++) % colors.size()]);
+      h.first->Draw(i ? "" : "same");
+    }
+    canv.SaveAs(ofname.c_str());
+  }
 
-  f_nominal->SetLineColorAlpha(2,0.65);
-  f_nominal->SetMarkerColor(2);
-  f_nominal->SetFillColor(0);
+  canv.SaveAs((ofname+']').c_str());
 
-  h_nominal->SetTitle("");
-  h_nominal->Draw("E1");
-  f_nominal->Draw("same");
-
-  double lxmin = 0.67;
-  double ly = 0.9;
-
-  lbl.DrawLatex(lxmin,ly,"ATLAS")->SetTextFont(73);
-  lbl.DrawLatex(lxmin+0.095,ly,"Internal");
-  lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 8 TeV");
-  lbl.DrawLatex(lxmin,ly-=0.06,"#it{H#rightarrow#gamma#gamma}, #it{m_{H}} = 125 GeV");
-
-  ly-=0.075;
-  TLegend leg(lxmin,ly,lxmin+0.21,ly+0.055);
-  leg.AddEntry(h_nominal,"MC","le");
-  leg.AddEntry(f_nominal,"Model","l");
-  leg.SetBorderSize(0);
-  leg.SetNColumns(2);
-  leg.SetFillStyle(0);
-  leg.Draw();
-
-  lxmin = 0.12;
-  ly = 0.9;
-
-  lbl.DrawLatex(lxmin,ly,"Fit parameters:");
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "#mu_{CB} = ",
-    make_pair(stats["mean_offset_bin0"].nominal+125.," #pm "),
-    " [GeV]"
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "#sigma_{CB} = ",
-    make_pair(stats["sigma_offset_bin0"].nominal," #pm "),
-    " [GeV]"
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "#alpha_{CB} = ",
-    make_pair(stats["crys_alpha_bin0"].nominal," #pm ")
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "#it{n}_{CB} = ",
-    fixed, setprecision(1),
-    stats["crys_norm_bin0"].nominal.val,
-    " (fixed)"
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "#mu_{GA} = ",
-    make_pair(stats["gaus_mean_offset_bin0"].nominal+125.," #pm "),
-    " [GeV]"
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "#kappa_{GA} = ",
-    make_pair(stats["gaus_kappa_bin0"].nominal," #pm ")
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "#phi_{CB} = ",
-    make_pair(stats["fcb_bin0"].nominal," #pm ")
-  ).c_str());
-
-  lbl.DrawLatex(lxmin,ly-=0.10,cat(
-    "FWHM_{ fit} = ",
-    setprecision(3), stats["FWHM"].nominal.val,
-    " [GeV]"
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "68% : (",
-    fixed, setprecision(1),
-    ltailx(f_nominal,0.16), ',', rtailx(f_nominal,0.16),
-    ") [GeV]"
-  ).c_str());
-  lbl.DrawLatex(lxmin,ly-=0.05,cat(
-    "90% : (",
-    fixed, setprecision(1),
-    ltailx(f_nominal,0.05), ',', rtailx(f_nominal,0.05),
-    ") [GeV]"
-  ).c_str());
-
-  canv.SaveAs(argv[2]);
-
-  canv.SaveAs(cat(argv[2],']').c_str());
-  */
-
-  delete fin;
   return 0;
 }

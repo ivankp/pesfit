@@ -25,6 +25,13 @@ public:
       throw std::runtime_error("Unsorted bins vector passed to binned container");
   }
 
+  binned(const binned<value_type,bin_type,bin_compare>& other, bool blank)
+  : bins(other.bins), vals(bins.size()+1)
+  {
+    if (!blank)
+      vals.assign(other.vals.begin(),other.vals.end());
+  }
+
   template<typename Min, typename Step>
   binned(size_t nbins, const Min& min, const Step& step)
   : bins(nbins), vals(nbins+1)
