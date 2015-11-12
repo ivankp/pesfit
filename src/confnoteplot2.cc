@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <unordered_set>
 #include <memory>
 #include <stdexcept>
 
@@ -47,6 +48,23 @@ namespace std {
     return in;
   }
 }
+
+class branches_manager {
+  TTree *tree;
+  vector<string> names;
+public:
+  branches_manager(TTree* tree): tree(tree) { }
+  template<typename T>
+  void operator()(string&& branch, T* x) {
+    tree->SetBranchAddress(branch.c_str(), x);
+    names.emplace_back(branch);
+  }
+  ~branches_manager() {
+    tree->SetBranchStatus("*",0);
+    for (const auto& name : names)
+      tree->SetBranchStatus(name.c_str(),1);
+  }
+};
 
 int main(int argc, char** argv)
 {
@@ -115,19 +133,22 @@ int main(int argc, char** argv)
   // Book histograms ************************************************
   constexpr auto hist_types = {"selected"};
   binned<vector<pair<TH1*,unique_ptr<TH1>>>>
-  hmap({0,5,10,15,20,25,30});
+    hmap({0,5,10,15,20,25,30});
 
-  for (size_t i=1, n=hmap.nbins(); i<=n; ++i) {
-    static auto& hs = hmap.at(i);
+  for (size_t i=1, n=hmap.nbins()+1; i<=n; ++i) {
+    auto& hs = hmap.at(i);
     hs.reserve(hist_types.size());
     for (const auto *hist_type : hist_types) {
       hs.emplace_back(
-        new TH1D( cat(
-          hist_type,"_m_yy_nvert[",hmap.left_edge(i),',',hmap.right_edge(i),')'
-        ).c_str(),
-        ";m_{#gamma#gamma} [GeV];d#sigma/dm_{#gamma#gamma} [fb/GeV]",
-        nbins,xrange.first,xrange.second),
-        make_unique<TH1D>("tmph","",nbins,xrange.first,xrange.second)
+        new TH1D(
+          i!=n ? cat(
+            hist_type,"_m_yy_nvert[",hmap.left_edge(i),',',hmap.right_edge(i),')'
+          ).c_str() : cat(
+            hist_type,"_m_yy_nvert_overflow"
+          ).c_str(),
+          ";m_{#gamma#gamma} [GeV];d#sigma/dm_{#gamma#gamma} [fb/GeV]",
+          nbins,xrange.first,xrange.second),
+        make_unique<TH1D>("tmp_hist","",nbins,xrange.first,xrange.second)
       );
       hs.back().second->SetDirectory(0);
     }
@@ -147,7 +168,7 @@ int main(int argc, char** argv)
     TTree *tree = get<TTree>(file,"CollectionTree");
 
     const size_t slash = f.rfind('/')+1;
-    const double xsecscale = 1000./get<TH1>(file,
+    const double xsecscale = 1e3/get<TH1>(file,
       ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
     )->GetBinContent(3);
 
@@ -166,19 +187,19 @@ int main(int argc, char** argv)
 
     // Branch variables
     static vector<pair<Float_t,Int_t>> var(hist_types.size());
-    tree->SetBranchAddress(
-      "HGamEventInfoAuxDyn.m_yy",&var.at(0).first);
-    tree->SetBranchAddress(
-      "HGamEventInfoAuxDyn.numberOfPrimaryVertices",&var.at(0).second);
-
     static Float_t crossSectionBRfilterEff, weight;
     static Char_t isPassed;
-    tree->SetBranchAddress(
-      "HGamEventInfoAuxDyn.crossSectionBRfilterEff",&crossSectionBRfilterEff);
-    tree->SetBranchAddress(
-      "HGamEventInfoAuxDyn.weight",&weight);
-    tree->SetBranchAddress(
-      "HGamEventInfoAuxDyn.isPassed",&isPassed);
+    {
+      branches_manager br(tree);
+
+      br("HGamEventInfoAuxDyn.m_yy", &var.at(0).first);
+      br("HGamEventInfoAuxDyn.numberOfPrimaryVertices", &var.at(0).second);
+
+      br("HGamEventInfoAuxDyn.crossSectionBRfilterEff",
+         &crossSectionBRfilterEff);
+      br("HGamEventInfoAuxDyn.weight", &weight);
+      br("HGamEventInfoAuxDyn.isPassed", &isPassed);
+    }
 
     // LOOP over tree entries
     for (Long64_t nent=tree->GetEntries(), ent=0; ent<nent; ++ent) {
@@ -186,15 +207,11 @@ int main(int argc, char** argv)
 
       for (size_t i=0, n=hist_types.size(); i<n; ++i) {
         auto& hist = hmap[var[i].second][i];
-        test( var[i].first )
-        test( var[i].second )
-        test( hist.first->GetName() )
         hist.second->Fill(
-          var[i].first,
+          var[i].first/1e3,
           crossSectionBRfilterEff*weight*isPassed
         );
       }
-      if (ent==10) break;
     }
 
     // Add histograms

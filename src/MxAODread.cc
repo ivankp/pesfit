@@ -15,6 +15,8 @@ int main(int argc, char** argv)
 
   Float_t m_yy = 0.;
   tree->SetBranchAddress("HGamEventInfoAuxDyn.m_yy",&m_yy);
+  tree->SetBranchStatus("*",0);
+  tree->SetBranchStatus("HGamEventInfoAuxDyn.m_yy",1);
 
   for (Long64_t nent=tree->GetEntries(), ent=0; ent<nent; ++ent) {
     tree->GetEntry(ent);
