@@ -1,6 +1,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <array>
+#include <tuple>
 #include <unordered_set>
 #include <memory>
 #include <stdexcept>
@@ -23,6 +25,7 @@
 #include "TGraph_fcns.hh"
 #include "binned.hh"
 #include "workspace.hh"
+#include "golden_min.hh"
 
 using namespace std;
 namespace po = boost::program_options;
@@ -75,6 +78,7 @@ int main(int argc, char** argv)
   pair<double,double> xrange;
   vector<Color_t> colors;
   vector<pair<string,pair<double,double>>> new_ws_ranges;
+  double sigma_frac;
 
   // options ---------------------------------------------------
   try {
@@ -89,12 +93,14 @@ int main(int argc, char** argv)
       ("config,c", po::value(&cfname),
        "configuration file name")
 
-      ("logy,l", po::bool_switch(&logy),
-       "logarithmic Y axis")
+      ("sigma-frac,s", po::value(&sigma_frac)->default_value(0.68),
+       "confidence interval fraction")
       ("nbins,n", po::value(&nbins)->default_value(100),
        "histograms\' number of bins")
       ("xrange,x", po::value(&xrange)->default_value({105,140},"105:140"),
        "histograms\' X range")
+      ("logy,l", po::bool_switch(&logy),
+       "logarithmic Y axis")
       ("colors", po::value(&colors)->multitoken()->
         default_value(decltype(colors)({602,46}), "{602,46}"),
        "histograms\' colors")
@@ -134,7 +140,7 @@ int main(int argc, char** argv)
   constexpr auto hist_types = {"selected"};
   binned<vector<pair<TH1*,unique_ptr<TH1>>>>
     hmap({0,5,10,15,20,25,30});
-
+    
   for (size_t i=1, n=hmap.nbins()+1; i<=n; ++i) {
     auto& hs = hmap.at(i);
     hs.reserve(hist_types.size());
@@ -186,7 +192,7 @@ int main(int argc, char** argv)
       throw runtime_error(cat("File \"",f,"\" repeats process ",proc));
 
     // Branch variables
-    static vector<pair<Float_t,Int_t>> var(hist_types.size());
+    static array<pair<Float_t,Int_t>,hist_types.size()> var;
     static Float_t crossSectionBRfilterEff, weight;
     static Char_t isPassed;
     {
@@ -205,9 +211,8 @@ int main(int argc, char** argv)
     for (Long64_t nent=tree->GetEntries(), ent=0; ent<nent; ++ent) {
       tree->GetEntry(ent);
 
-      for (size_t i=0, n=hist_types.size(); i<n; ++i) {
-        auto& hist = hmap[var[i].second][i];
-        hist.second->Fill(
+      for (size_t i=0; i<var.size(); ++i) {
+        hmap[var[i].second][i].second->Fill(
           var[i].first/1e3,
           crossSectionBRfilterEff*weight*isPassed
         );
@@ -215,8 +220,8 @@ int main(int argc, char** argv)
     }
 
     // Add histograms
-    for (const auto& hs : hmap) {
-      for (const auto& h : hs) {
+    for (auto it=hmap.begin(), end=hmap.end(true); it!=end; ++it) {
+      for (const auto& h : *it) {
         h.second->Scale(xsecscale/h.second->GetBinWidth(1));
         h.first->Add(h.second.get());
         h.second->Reset();
@@ -228,20 +233,83 @@ int main(int argc, char** argv)
 
   // Fit functions **************************************************
   workspace ws(wfname);
+  golden_min gm;
+  
+  vector<array<tuple<TGraph*,double,double>,hist_types.size()>> fits;
+  fits.reserve(hmap.nbins());
+
+  for (const auto& hs : hmap) {
+    size_t i=0;
+    fits.emplace_back();
+    for (const auto& h : hs) {
+      TGraph* fit_gr = ws.fit(h.first).second;
+      const Double_t integral = integrate(fit_gr);
+      // minimize sigma
+      Double_t x1 = gm( [fit_gr,sigma_frac,integral](double x1) {
+        return intervalx2(fit_gr, sigma_frac, x1, integral) - x1;
+      }, firstx(fit_gr), rtailx(fit_gr,sigma_frac,integral) ).first;
+      Double_t x2 = intervalx2(fit_gr, sigma_frac, x1, integral);
+      
+      fit_gr->SetName(cat(h.first->GetName(),"_fit").c_str());
+      fits.back()[i++] = make_tuple(fit_gr,x1,x2);
+      test( fit_gr->GetName() )
+    }
+  }
 
   // Draw histograms ************************************************
   TCanvas canv;
+  canv.SetMargin(0.08,0.04,0.1,0.02);
+  canv.SetTicks();
+
+  TLatex lbl;
+  lbl.SetTextFont(43);
+  lbl.SetTextSize(18);
+  lbl.SetNDC();
 
   canv.SaveAs((ofname+'[').c_str());
+  
+  // Summary plot
+  array<TH1*,hist_types.size()> hists; hists.fill(nullptr);
+  for (const auto& fit : fits) {
+    static int b=0;
+    int h=0;
+    for (const auto *hist_type : hist_types) {
+      if (b==0) hists[h] = new TH1D(hist_type,"",hmap.nbins(),hmap.get_bins().data());
+      hists[h]->SetBinContent(b+1,get<2>(fit[b])-get<1>(fit[b]));
+      ++h;
+    }
+    ++b;
+  }
+  for (auto* h : hists) {
+    static int i=0;
+    Color_t color = colors[i % colors.size()];
+    h->SetStats(false);
+    h->SetLineWidth(2);
+    h->GetYaxis()->SetTitleOffset(1.05);
+    h->SetLineColor(color);
+    h->SetMarkerColor(color);
+    h->Draw(i ? "same" : "");
+    ++i;
+  }
+  canv.SaveAs(ofname.c_str());
 
-  for (const auto& hs : hmap) {
-    int i=0;
+  // Histograms in vertex bins
+  if (logy) canv.SetLogy();
+  
+  for (size_t b=1, n=hmap.nbins()+1; b<=n; ++b) {
     Color_t color;
-    for (const auto& h : hs) {
-      h.first->SetStats(false);
-      h.first->SetLineWidth(2);
-      h.first->SetLineColor(color = colors[(i++) % colors.size()]);
-      h.first->Draw(i ? "" : "same");
+    int i=0;
+    for (const auto& hp : hmap.at(b)) {
+      TH1* h = hp.first;
+      h->SetStats(false);
+      h->SetLineWidth(2);
+      h->GetYaxis()->SetTitleOffset(1.05);
+      h->SetLineColor(color = colors[i % colors.size()]);
+      h->Draw(i ? "same" : "");
+      get<0>(fits[b][i])->Draw("same");
+      
+      lbl.DrawLatex(0.12,0.9-0.05*i,h->GetName())->SetTextColor(color);
+      ++i;
     }
     canv.SaveAs(ofname.c_str());
   }

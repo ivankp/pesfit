@@ -64,10 +64,16 @@ public:
   inline size_t nbins() const noexcept {
     return bins.size()-1;
   }
+  inline auto get_bins() const noexcept -> const decltype(bins)& {
+    return bins;
+  }
 
   inline value_type& at(size_t i) {
     return vals.at(i);
   }
+  
+  inline const bin_type& xmin() const { return bins.front(); }
+  inline const bin_type& xmax() const { return bins.back();  }
 
   size_t bin_index(const bin_type& x) const {
     if ( bin_compare()(x,bins.front()) ) {
