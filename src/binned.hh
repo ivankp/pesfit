@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include <iostream>
+#define test(var) \
+  std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
+
 template<typename T, typename Bin=double, typename Compare=std::less<Bin>>
 class binned {
 public:
@@ -34,11 +38,11 @@ public:
 
   template<typename Min, typename Step>
   binned(size_t nbins, const Min& min, const Step& step)
-  : bins(nbins), vals(nbins+1)
+  : bins(nbins+1), vals(nbins+2)
   {
     bins[0] = min;
-    for (size_t i=1; i<nbins; ++i)
-      bins[i] = bins[i-1] + step;
+    for (size_t i=0; i<nbins; ++i)
+      bins[i+1] = bins[i] + step;
   }
 
   value_type& operator[](const bin_type& x) {
@@ -71,7 +75,7 @@ public:
   inline value_type& at(size_t i) {
     return vals.at(i);
   }
-  
+
   inline const bin_type& xmin() const { return bins.front(); }
   inline const bin_type& xmax() const { return bins.back();  }
 

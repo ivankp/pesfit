@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <memory>
 #include <stdexcept>
+#include <cmath>
 
 #include <boost/program_options.hpp>
 
@@ -17,6 +18,7 @@
 #include <TCanvas.h>
 #include <TAxis.h>
 #include <TLatex.h>
+#include <TLine.h>
 #include <TLegend.h>
 
 #include "regex.hh"
@@ -79,6 +81,7 @@ int main(int argc, char** argv)
   vector<Color_t> colors;
   vector<pair<string,pair<double,double>>> new_ws_ranges;
   double sigma_frac;
+  pair<int,pair<double,double>> vert;
 
   // options ---------------------------------------------------
   try {
@@ -93,9 +96,11 @@ int main(int argc, char** argv)
       ("config,c", po::value(&cfname),
        "configuration file name")
 
-      ("sigma-frac,s", po::value(&sigma_frac)->default_value(0.68),
+      ("sigma-frac,s", po::value(&sigma_frac)->default_value(0.68,"0.68"),
        "confidence interval fraction")
-      ("nbins,n", po::value(&nbins)->default_value(100),
+      ("vert,v", po::value(&vert)->required(),
+       "num vertices binning")
+      ("nbins,b", po::value(&nbins)->default_value(100),
        "histograms\' number of bins")
       ("xrange,x", po::value(&xrange)->default_value({105,140},"105:140"),
        "histograms\' X range")
@@ -139,19 +144,22 @@ int main(int argc, char** argv)
   // Book histograms ************************************************
   constexpr auto hist_types = {"selected"};
   binned<vector<pair<TH1*,unique_ptr<TH1>>>>
-    hmap({0,5,10,15,20,25,30});
-    
-  for (size_t i=1, n=hmap.nbins()+1; i<=n; ++i) {
+    hmap(vert.first,vert.second.first,vert.second.second);
+
+  for (size_t i=0, n=hmap.nbins()+1; i<=n; ++i) {
     auto& hs = hmap.at(i);
     hs.reserve(hist_types.size());
     for (const auto *hist_type : hist_types) {
+      string name;
+      if (i==0) name = cat(
+        hist_type,"_m_yy_nvert<",hmap.right_edge(i)
+      ); else if (i==n) name = cat(
+        hist_type,"_m_yy_nvert>",hmap.left_edge(i)
+      ); else name = cat(
+        hist_type,"_m_yy_nvert[",hmap.left_edge(i),',',hmap.right_edge(i),')'
+      );
       hs.emplace_back(
-        new TH1D(
-          i!=n ? cat(
-            hist_type,"_m_yy_nvert[",hmap.left_edge(i),',',hmap.right_edge(i),')'
-          ).c_str() : cat(
-            hist_type,"_m_yy_nvert_overflow"
-          ).c_str(),
+        new TH1D( name.c_str(),
           ";m_{#gamma#gamma} [GeV];d#sigma/dm_{#gamma#gamma} [fb/GeV]",
           nbins,xrange.first,xrange.second),
         make_unique<TH1D>("tmp_hist","",nbins,xrange.first,xrange.second)
@@ -234,7 +242,7 @@ int main(int argc, char** argv)
   // Fit functions **************************************************
   workspace ws(wfname);
   golden_min gm;
-  
+
   vector<array<tuple<TGraph*,double,double>,hist_types.size()>> fits;
   fits.reserve(hmap.nbins());
 
@@ -249,10 +257,9 @@ int main(int argc, char** argv)
         return intervalx2(fit_gr, sigma_frac, x1, integral) - x1;
       }, firstx(fit_gr), rtailx(fit_gr,sigma_frac,integral) ).first;
       Double_t x2 = intervalx2(fit_gr, sigma_frac, x1, integral);
-      
+
       fit_gr->SetName(cat(h.first->GetName(),"_fit").c_str());
       fits.back()[i++] = make_tuple(fit_gr,x1,x2);
-      test( fit_gr->GetName() )
     }
   }
 
@@ -266,20 +273,32 @@ int main(int argc, char** argv)
   lbl.SetTextSize(18);
   lbl.SetNDC();
 
+  TLine line;
+
   canv.SaveAs((ofname+'[').c_str());
-  
+
   // Summary plot
   array<TH1*,hist_types.size()> hists; hists.fill(nullptr);
   for (const auto& fit : fits) {
     static int b=0;
     int h=0;
     for (const auto *hist_type : hist_types) {
-      if (b==0) hists[h] = new TH1D(hist_type,"",hmap.nbins(),hmap.get_bins().data());
-      hists[h]->SetBinContent(b+1,get<2>(fit[b])-get<1>(fit[b]));
+      if (b==0) hists[h] = new TH1D(
+        hist_type,
+        cat(";Number primary vertices;"
+            "#sigma_{",sigma_frac*100,"} [GeV]").c_str(),
+        hmap.nbins(),hmap.get_bins().data());
+      hists[h]->SetBinContent(b+1,get<2>(fit[h])-get<1>(fit[h]));
       ++h;
     }
     ++b;
   }
+
+  TLegend leg(0.12,0.67,0.45,0.76);
+  array<const char*,hist_types.size()> leg_lbl {
+    "Selected vertex"
+  };
+
   for (auto* h : hists) {
     static int i=0;
     Color_t color = colors[i % colors.size()];
@@ -288,15 +307,31 @@ int main(int argc, char** argv)
     h->GetYaxis()->SetTitleOffset(1.05);
     h->SetLineColor(color);
     h->SetMarkerColor(color);
+    // h->SetMarkerStyle(20+i);
     h->Draw(i ? "same" : "");
+    if (i==0) {
+      leg.AddEntry(h,leg_lbl[i]);
+      double lxmin = 0.12;
+      double ly = 0.9;
+      lbl.DrawLatex(lxmin,ly,"ATLAS")->SetTextFont(73);
+      lbl.DrawLatex(lxmin+0.095,ly,"Internal");
+      lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 13 TeV");
+      lbl.DrawLatex(lxmin,ly-=0.06,
+        "#it{H#rightarrow#gamma#gamma}, #it{m_{H}} = 125 GeV");
+    }
     ++i;
   }
+
+  leg.SetBorderSize(0);
+  leg.SetFillStyle(0);
+  leg.Draw();
+
   canv.SaveAs(ofname.c_str());
 
   // Histograms in vertex bins
   if (logy) canv.SetLogy();
-  
-  for (size_t b=1, n=hmap.nbins()+1; b<=n; ++b) {
+
+  for (size_t b=1, n=hmap.nbins(); b<=n+1; ++b) {
     Color_t color;
     int i=0;
     for (const auto& hp : hmap.at(b)) {
@@ -306,8 +341,24 @@ int main(int argc, char** argv)
       h->GetYaxis()->SetTitleOffset(1.05);
       h->SetLineColor(color = colors[i % colors.size()]);
       h->Draw(i ? "same" : "");
-      get<0>(fits[b][i])->Draw("same");
-      
+      const auto& fit = fits[b-1][i];
+      if (b<=n) {
+        get<0>(fit)->Draw("same");
+        canv.Update();
+        double y1 = canv.GetUymin();
+        double y2 = canv.GetUymax();
+        if (logy) {
+          y1 = pow(10.,y1);
+          y2 = pow(10.,y2);
+        }
+      	line.DrawLine(get<1>(fit), y1, get<1>(fit), y2)->SetLineColor(color);
+      	line.DrawLine(get<2>(fit), y1, get<2>(fit), y2)->SetLineColor(color);
+
+        canv.Update();
+        TLine line(canv.GetUxmax(),canv.GetUymin(),canv.GetUxmin(),canv.GetUymax());
+        line.Draw();
+      }
+
       lbl.DrawLatex(0.12,0.9-0.05*i,h->GetName())->SetTextColor(color);
       ++i;
     }

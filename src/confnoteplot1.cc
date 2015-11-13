@@ -27,7 +27,7 @@ using namespace std;
 
 structmap(val_err<double>,hist_t,
   (nominal)(scale_down)(scale_up)(res_down)(res_up));
-  
+
 int main(int argc, char** argv)
 {
   if (argc!=3 && argc!=4) {
@@ -84,7 +84,7 @@ int main(int argc, char** argv)
 
   lbl.DrawLatex(lxmin,ly,"ATLAS")->SetTextFont(73);
   lbl.DrawLatex(lxmin+0.095,ly,"Internal");
-  lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 8 TeV");
+  lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 13 TeV");
   lbl.DrawLatex(lxmin,ly-=0.06,"#it{H#rightarrow#gamma#gamma}, #it{m_{H}} = 125 GeV");
 
   ly-=0.075;
@@ -139,12 +139,12 @@ int main(int argc, char** argv)
     setprecision(3), stats["FWHM"].nominal.val,
     " [GeV]"
   ).c_str());
-  
+
   const Double_t integral = integrate(f_nominal);
-  
+
   if (argc==4 && string("minsig")==argv[3]) {
     golden_min gm;
-    
+
     for (auto frac : {0.68,0.90}) {
       test(frac)
       auto x1 = gm( [f_nominal,frac,integral](double x1) {
