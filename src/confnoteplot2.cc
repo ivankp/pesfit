@@ -201,7 +201,7 @@ int main(int argc, char** argv)
 
     // Branch variables
     static array<pair<Float_t,Int_t>,hist_types.size()> var;
-    static Float_t crossSectionBRfilterEff, weight;
+    static Float_t crossSectionBRfilterEff;//, weight;
     static Char_t isPassed;
     {
       branches_manager br(tree);
@@ -211,7 +211,7 @@ int main(int argc, char** argv)
 
       br("HGamEventInfoAuxDyn.crossSectionBRfilterEff",
          &crossSectionBRfilterEff);
-      br("HGamEventInfoAuxDyn.weight", &weight);
+      // br("HGamEventInfoAuxDyn.weight", &weight);
       br("HGamEventInfoAuxDyn.isPassed", &isPassed);
     }
 
@@ -220,10 +220,11 @@ int main(int argc, char** argv)
       tree->GetEntry(ent);
 
       for (size_t i=0; i<var.size(); ++i) {
-        hmap[var[i].second][i].second->Fill(
-          var[i].first/1e3,
-          crossSectionBRfilterEff*weight*isPassed
-        );
+        if (isPassed==1)
+          hmap[var[i].second][i].second->Fill(
+            var[i].first/1e3,
+            crossSectionBRfilterEff//*weight
+          );
       }
     }
 
@@ -360,6 +361,8 @@ int main(int argc, char** argv)
       }
 
       lbl.DrawLatex(0.12,0.9-0.05*i,h->GetName())->SetTextColor(color);
+      lbl.DrawLatex(0.80,0.9-0.05*i,
+        cat(h->GetEntries()).c_str())->SetTextColor(color);
       ++i;
     }
     canv.SaveAs(ofname.c_str());
