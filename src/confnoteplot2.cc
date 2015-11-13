@@ -288,7 +288,7 @@ int main(int argc, char** argv)
         cat(";Number primary vertices;"
             "#sigma_{",sigma_frac*100,"} [GeV]").c_str(),
         hmap.nbins(),hmap.get_bins().data());
-      hists[h]->SetBinContent(b+1,get<2>(fit[h])-get<1>(fit[h]));
+      hists[h]->SetBinContent(b+1,(get<2>(fit[h])-get<1>(fit[h]))/2.);
       ++h;
     }
     ++b;
