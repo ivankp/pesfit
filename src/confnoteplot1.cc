@@ -25,6 +25,10 @@ using namespace std;
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
 
+#ifndef Old8TeVFile
+#define Old8TeVFile 0
+#endif
+
 structmap(val_err<double>,hist_t,
   (nominal)(scale_down)(scale_up)(res_down)(res_up));
 
@@ -64,7 +68,7 @@ int main(int argc, char** argv)
   lbl.SetTextFont(43);
   lbl.SetTextSize(18);
   lbl.SetNDC();
-
+  
   h_nominal->SetLineWidth(1);
   h_nominal->SetLineColor(1);
   h_nominal->SetMarkerColor(1);
@@ -76,7 +80,7 @@ int main(int argc, char** argv)
   f_nominal->SetFillColor(0);
 
   h_nominal->SetTitle("");
-  h_nominal->Draw("E1");
+  h_nominal->Draw( h_nominal->GetSumw2()->GetSize() ? "E1" : "" );
   f_nominal->Draw("same");
 
   double lxmin = 0.67;
@@ -84,7 +88,11 @@ int main(int argc, char** argv)
 
   lbl.DrawLatex(lxmin,ly,"ATLAS")->SetTextFont(73);
   lbl.DrawLatex(lxmin+0.095,ly,"Internal");
+  #if !(Old8TeVFile)
   lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 13 TeV");
+  #else
+  lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 8 TeV");
+  #endif
   lbl.DrawLatex(lxmin,ly-=0.06,"#it{H#rightarrow#gamma#gamma}, #it{m_{H}} = 125 GeV");
 
   ly-=0.075;

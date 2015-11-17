@@ -1,6 +1,10 @@
 // Developed by Ivan Pogrebnyak, MSU
 #include "pesfit.hh"
 
+#ifndef Old8TeVFile
+#define Old8TeVFile 0
+#endif
+
 template<typename T> inline T sq(T x) noexcept { return x*x; }
 
 namespace std {
@@ -28,7 +32,7 @@ vector<string> ifname;
 vector<Color_t> colors;
 Int_t nbins;
 pair<double,double> xrange;
-bool logy, fix_alpha;
+bool logy, fix_alpha, sumw2, norm;
 int prec;
 vector<pair<string,pair<double,double>>> new_ws_ranges;
 // --------------------------
@@ -59,21 +63,31 @@ void make_hist(TH1*& hist, const char* name, const string& proc,
   const string cmd1(cat(
     branch,"/1000>>hist(",nbins,",",xrange.first,",",xrange.second,")"));
   const string cmd2(
+  #if !(Old8TeVFile)
     "HGamEventInfoAuxDyn.crossSectionBRfilterEff"
     "*HGamEventInfoAuxDyn.weight"
-    "*(HGamEventInfoAuxDyn.isPassed==1)");
+    "*(HGamEventInfoAuxDyn.isPassed==1)"
+  #else
+    "weight*(Higgs_truth_mass==125)"
+  #endif
+  );
   tree->Draw(cmd1.c_str(),cmd2.c_str());
   cout << endl << name
        << endl << cmd1
        << endl << cmd2 << endl;
   TH1 *temp = get<TH1>(gDirectory,"hist");
+  
+  temp->Sumw2(sumw2);
+  if (!sumw2) temp->GetSumw2()->Set(0);
+  
   temp->Scale(1000.*scale/temp->GetBinWidth(1));
 
   stats[name]["xsec_"+proc] = temp->Integral(0,temp->GetNbinsX()+1,"width");
 
-  if (!hist)
-    (hist = (TH1*)temp->Clone(name))->SetDirectory(0);
-  else hist->Add(temp);
+  if (!hist) {
+    hist = static_cast<TH1*>(temp->Clone(name));
+    hist->SetDirectory(0);
+  } else hist->Add(temp);
 }
 
 vector<FitResult> fit(const initializer_list<TH1*>& hs) {
@@ -95,7 +109,8 @@ vector<FitResult> fit(const initializer_list<TH1*>& hs) {
     hist->SetMarkerColor(color);
 
     hist->SetXTitle("m_{#gamma#gamma} [GeV]");
-    hist->SetYTitle("d#sigma/dm_{#gamma#gamma} [fb/GeV]");
+    if (norm) hist->Scale(1./hist->Integral());
+    else hist->SetYTitle("d#sigma/dm_{#gamma#gamma} [fb/GeV]");
     hist->SetTitleOffset(1.3,"Y");
     switch (out_) {
       case Out::pdf:
@@ -200,6 +215,10 @@ int main(int argc, char** argv)
 
       ("logy,l", po::bool_switch(&logy),
        "logarithmic Y axis")
+      ("sumw2", po::bool_switch(&sumw2),
+       "histograms' Sumw2")
+      ("norm", po::bool_switch(&norm),
+       "normalize histograms")
       ("fit,f", po::value(&fit_)->default_value(Fit::none),
        cat("fit type: ",Fit::_str_all()).c_str())
       ("workspace,w", po::value(&wfname)->default_value("data/ws.root"),
@@ -264,6 +283,8 @@ int main(int argc, char** argv)
     TFile *file = new TFile(f.c_str(),"read");
     if (file->IsZombie()) return 1;
     cout << "Data file: " << f << endl;
+    
+    #if !(Old8TeVFile)
     tree = get<TTree>(file,"CollectionTree");
 
     const size_t slash = f.rfind('/')+1;
@@ -295,6 +316,12 @@ int main(int argc, char** argv)
               "HGamEventInfo_EG_RESOLUTION_ALL__1downAuxDyn.m_yy");
     make_hist(res_up,"res_up",proc,xsecscale,
               "HGamEventInfo_EG_RESOLUTION_ALL__1upAuxDyn.m_yy");
+
+    #else
+    tree = get<TTree>(file,"Hgg_tree");
+
+    make_hist(nom,"nominal","all",1.,"m_yy");
+    #endif
 
     delete file;
   }

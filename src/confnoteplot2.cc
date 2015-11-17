@@ -35,6 +35,10 @@ namespace po = boost::program_options;
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
 
+#ifndef Old8TeVFile
+#define Old8TeVFile 0
+#endif
+
 template<typename T, typename ...Args>
 std::unique_ptr<T> make_unique( Args&& ...args ) {
   return std::unique_ptr<T>( new T( std::forward<Args>(args)... ) );
@@ -75,7 +79,7 @@ int main(int argc, char** argv)
 {
   vector<string> ifname;
   string ofname, wfname, cfname;
-  bool logy;
+  bool logy, sumw2;
   int nbins;
   pair<double,double> xrange;
   vector<Color_t> colors;
@@ -106,6 +110,8 @@ int main(int argc, char** argv)
        "histograms\' X range")
       ("logy,l", po::bool_switch(&logy),
        "logarithmic Y axis")
+      ("sumw2", po::bool_switch(&sumw2),
+       "histograms' Sumw2")
       ("colors", po::value(&colors)->multitoken()->
         default_value(decltype(colors)({602,46}), "{602,46}"),
        "histograms\' colors")
@@ -165,6 +171,8 @@ int main(int argc, char** argv)
         make_unique<TH1D>("tmp_hist","",nbins,xrange.first,xrange.second)
       );
       hs.back().second->SetDirectory(0);
+      hs.back().first ->Sumw2(sumw2);
+      hs.back().second->Sumw2(sumw2);
     }
   }
 
@@ -179,8 +187,10 @@ int main(int argc, char** argv)
     TFile *file = new TFile(f.c_str(),"read");
     if (file->IsZombie()) return 1;
     cout << "Data file: " << f << endl;
-    TTree *tree = get<TTree>(file,"CollectionTree");
 
+    #if !(Old8TeVFile)
+    TTree *tree = get<TTree>(file,"CollectionTree");
+    
     const size_t slash = f.rfind('/')+1;
     const double xsecscale = 1e3/get<TH1>(file,
       ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
@@ -199,7 +209,13 @@ int main(int argc, char** argv)
     if (!procs.emplace(proc).second)
       throw runtime_error(cat("File \"",f,"\" repeats process ",proc));
 
+    #else
+    TTree *tree = get<TTree>(file,"Hgg_tree");
+    const double xsecscale = 1.;
+    #endif
+
     // Branch variables
+    #if !(Old8TeVFile)
     static array<pair<Float_t,Int_t>,hist_types.size()> var;
     static Float_t crossSectionBRfilterEff;//, weight;
     static Char_t isPassed;
@@ -214,17 +230,37 @@ int main(int argc, char** argv)
       // br("HGamEventInfoAuxDyn.weight", &weight);
       br("HGamEventInfoAuxDyn.isPassed", &isPassed);
     }
+    #else
+    static array<pair<Double_t,Int_t>,hist_types.size()> var;
+    //static Double_t weight;
+    static Int_t truth_mH;
+    {
+      branches_manager br(tree);
+
+      br("m_yy", &var.at(0).first);
+      br("NPV",  &var.at(0).second);
+      br("Higgs_truth_mass", &truth_mH);
+      //br("weight", &weight);
+    }
+    #endif
 
     // LOOP over tree entries
     for (Long64_t nent=tree->GetEntries(), ent=0; ent<nent; ++ent) {
       tree->GetEntry(ent);
 
       for (size_t i=0; i<var.size(); ++i) {
+        #if !(Old8TeVFile)
         if (isPassed==1)
           hmap[var[i].second][i].second->Fill(
             var[i].first/1e3,
             crossSectionBRfilterEff//*weight
           );
+        #else
+        if (truth_mH==125)
+          hmap[var[i].second][i].second->Fill(
+            var[i].first/1e3 //, weight
+          );
+        #endif
       }
     }
 
