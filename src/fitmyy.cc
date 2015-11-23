@@ -2,7 +2,6 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <memory>
 #include <utility>
 
 #include <TFile.h>
@@ -121,26 +120,34 @@ int main(int argc, char** argv)
     RooFit::Strategy(2)
   );
 
+  fit->Print("v");
+
   TCanvas canv;
   canv.SetMargin(0.1,0.04,0.1,0.1);
   canv.SetLogy();
   // canv.SaveAs(cat(argv[1],'[').c_str());
 
   for (auto& tree : trees) {
-    static bool first = true;
-    RooPlot *frame = ws.myy->frame(RooFit::Title(tree.cname()));
+    static int i=0;
+    RooPlot *frame = ws.myy->frame(RooFit::Title(" "/*tree.cname()*/));
+    // Draw Monte Carlo histogram
     set.plotOn(frame,
-      RooFit::LineColor(12),
+      RooFit::MarkerColor(40+10*i),
+      RooFit::MarkerSize(0.5),
       RooFit::Cut(cat("mc_sample == mc_sample::",tree.name).c_str())
     );
+    // Draw fitted function
+    // !!!!!!!!!!!!!!!!!!!!!!!!!! I get a segfault here!!!
     // ws.sim_pdf->plotOn(frame,
     //   RooFit::LineColor(85),
     //   RooFit::Slice(*ws.cat, tree.cname()),
     //   RooFit::ProjWData(RooArgSet(*ws.cat), set)
     //   // RooFit::Precision(1e-5)
     // );
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!
+
     // auto *curve = frame->getCurve();
-    frame->Draw(first ? (first=false, "") : "same");
+    frame->Draw(i++ ? "same" : "");
   }
   canv.SaveAs(argv[1]);
   // canv.SaveAs(cat(argv[1],']').c_str());
