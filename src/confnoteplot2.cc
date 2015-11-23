@@ -35,14 +35,12 @@ namespace po = boost::program_options;
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
 
-#ifndef Old8TeVFile
-#define Old8TeVFile 0
-#endif
-
 template<typename T, typename ...Args>
 std::unique_ptr<T> make_unique( Args&& ...args ) {
   return std::unique_ptr<T>( new T( std::forward<Args>(args)... ) );
 }
+
+union fd_t { Double_t d; Float_t f; };
 
 namespace std {
   template <typename T1, typename T2>
@@ -79,7 +77,7 @@ int main(int argc, char** argv)
 {
   vector<string> ifname;
   string ofname, wfname, cfname;
-  bool logy, sumw2;
+  bool logy, sumw2, old8;
   int nbins;
   pair<double,double> xrange;
   vector<Color_t> colors;
@@ -118,6 +116,8 @@ int main(int argc, char** argv)
 
       ("ws-setRange", po::value(&new_ws_ranges),
        "call RooWorkspace::setRange()")
+      ("old8", po::bool_switch(&old8),
+       "read an old 8TeV file")
     ;
 
     po::positional_options_description pos;
@@ -188,79 +188,80 @@ int main(int argc, char** argv)
     if (file->IsZombie()) return 1;
     cout << "Data file: " << f << endl;
 
-    #if !(Old8TeVFile)
-    TTree *tree = get<TTree>(file,"CollectionTree");
-    
-    const size_t slash = f.rfind('/')+1;
-    const double xsecscale = 1e3/get<TH1>(file,
-      ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
-    )->GetBinContent(3);
+    TTree *tree = nullptr;
+    double xsecscale = 1.;
+    if (!old8) {
+      tree = get<TTree>(file,"CollectionTree");
 
-    // Regex for process identification
-    static regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
-                         regex_icase);
-    smatch proc_match;
-    if (!regex_match(f, proc_match, proc_re))
-      throw runtime_error(cat("Filename \"",f,"\" does not specify process"));
-    const string proc(proc_match.str(1));
+      const size_t slash = f.rfind('/')+1;
+      xsecscale = 1e3/get<TH1>(file,
+        ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
+      )->GetBinContent(3);
 
-    // protect from repeated processes
-    static unordered_set<string> procs;
-    if (!procs.emplace(proc).second)
-      throw runtime_error(cat("File \"",f,"\" repeats process ",proc));
+      // Regex for process identification
+      static regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
+                           regex_icase);
+      smatch proc_match;
+      if (!regex_match(f, proc_match, proc_re))
+        throw runtime_error(cat("Filename \"",f,"\" does not specify process"));
+      const string proc(proc_match.str(1));
 
-    #else
-    TTree *tree = get<TTree>(file,"Hgg_tree");
-    const double xsecscale = 1.;
-    #endif
+      // protect from repeated processes
+      static unordered_set<string> procs;
+      if (!procs.emplace(proc).second)
+        throw runtime_error(cat("File \"",f,"\" repeats process ",proc));
+
+    } else {
+      tree = get<TTree>(file,"Hgg_tree");
+    }
 
     // Branch variables
-    #if !(Old8TeVFile)
-    static array<pair<Float_t,Int_t>,hist_types.size()> var;
+    static array<pair<fd_t,Int_t>,hist_types.size()> var;
     static Float_t crossSectionBRfilterEff;//, weight;
     static Char_t isPassed;
-    {
+    static Int_t truth_mH;
+    if (!old8) {
       branches_manager br(tree);
 
-      br("HGamEventInfoAuxDyn.m_yy", &var.at(0).first);
+      br("HGamEventInfoAuxDyn.m_yy", &var.at(0).first.f);
       br("HGamEventInfoAuxDyn.numberOfPrimaryVertices", &var.at(0).second);
 
       br("HGamEventInfoAuxDyn.crossSectionBRfilterEff",
          &crossSectionBRfilterEff);
       // br("HGamEventInfoAuxDyn.weight", &weight);
       br("HGamEventInfoAuxDyn.isPassed", &isPassed);
-    }
-    #else
-    static array<pair<Double_t,Int_t>,hist_types.size()> var;
-    //static Double_t weight;
-    static Int_t truth_mH;
-    {
+    } else {
       branches_manager br(tree);
 
-      br("m_yy", &var.at(0).first);
+      br("m_yy", &var.at(0).first.d);
       br("NPV",  &var.at(0).second);
       br("Higgs_truth_mass", &truth_mH);
       //br("weight", &weight);
     }
-    #endif
 
     // LOOP over tree entries
-    for (Long64_t nent=tree->GetEntries(), ent=0; ent<nent; ++ent) {
-      tree->GetEntry(ent);
+    if (!old8) {
+      for (Long64_t nent=tree->GetEntries(), ent=0; ent<nent; ++ent) {
+        tree->GetEntry(ent);
 
-      for (size_t i=0; i<var.size(); ++i) {
-        #if !(Old8TeVFile)
-        if (isPassed==1)
-          hmap[var[i].second][i].second->Fill(
-            var[i].first/1e3,
-            crossSectionBRfilterEff//*weight
-          );
-        #else
-        if (truth_mH==125)
-          hmap[var[i].second][i].second->Fill(
-            var[i].first/1e3 //, weight
-          );
-        #endif
+        for (size_t i=0; i<var.size(); ++i) {
+          if (isPassed==1)
+            hmap[var[i].second][i].second->Fill(
+              var[i].first.f/1e3,
+              crossSectionBRfilterEff//*weight
+            );
+        }
+      }
+    } else {
+      for (Long64_t nent=tree->GetEntries(), ent=0; ent<nent; ++ent) {
+        tree->GetEntry(ent);
+
+        for (size_t i=0; i<var.size(); ++i) {
+          if (truth_mH==125)
+            hmap[var[i].second][i].second->Fill(
+              var[i].first.d/1e3 //, weight
+            );
+        }
       }
     }
 

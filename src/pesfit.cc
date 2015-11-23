@@ -1,10 +1,6 @@
 // Developed by Ivan Pogrebnyak, MSU
 #include "pesfit.hh"
 
-#ifndef Old8TeVFile
-#define Old8TeVFile 0
-#endif
-
 template<typename T> inline T sq(T x) noexcept { return x*x; }
 
 namespace std {
@@ -32,7 +28,7 @@ vector<string> ifname;
 vector<Color_t> colors;
 Int_t nbins;
 pair<double,double> xrange;
-bool logy, fix_alpha, sumw2, norm;
+bool logy, fix_alpha, sumw2, norm, old8;
 int prec;
 vector<pair<string,pair<double,double>>> new_ws_ranges;
 // --------------------------
@@ -62,24 +58,21 @@ void make_hist(TH1*& hist, const char* name, const string& proc,
 
   const string cmd1(cat(
     branch,"/1000>>hist(",nbins,",",xrange.first,",",xrange.second,")"));
-  const string cmd2(
-  #if !(Old8TeVFile)
-    "HGamEventInfoAuxDyn.crossSectionBRfilterEff"
-    "*HGamEventInfoAuxDyn.weight"
-    "*(HGamEventInfoAuxDyn.isPassed==1)"
-  #else
-    "weight*(Higgs_truth_mass==125)"
-  #endif
+  const string cmd2( old8
+    ? "weight*(Higgs_truth_mass==125)"
+    : "HGamEventInfoAuxDyn.crossSectionBRfilterEff"
+      "*HGamEventInfoAuxDyn.weight"
+      "*(HGamEventInfoAuxDyn.isPassed==1)"
   );
   tree->Draw(cmd1.c_str(),cmd2.c_str());
   cout << endl << name
        << endl << cmd1
        << endl << cmd2 << endl;
   TH1 *temp = get<TH1>(gDirectory,"hist");
-  
+
   temp->Sumw2(sumw2);
   if (!sumw2) temp->GetSumw2()->Set(0);
-  
+
   temp->Scale(1000.*scale/temp->GetBinWidth(1));
 
   stats[name]["xsec_"+proc] = temp->Integral(0,temp->GetNbinsX()+1,"width");
@@ -237,6 +230,8 @@ int main(int argc, char** argv)
 
       ("ws-setRange", po::value(&new_ws_ranges),
        "call RooWorkspace::setRange()")
+      ("old8", po::bool_switch(&old8),
+       "read an old 8TeV file")
     ;
 
     po::positional_options_description pos;
@@ -283,45 +278,45 @@ int main(int argc, char** argv)
     TFile *file = new TFile(f.c_str(),"read");
     if (file->IsZombie()) return 1;
     cout << "Data file: " << f << endl;
-    
-    #if !(Old8TeVFile)
-    tree = get<TTree>(file,"CollectionTree");
 
-    const size_t slash = f.rfind('/')+1;
-    const double xsecscale = 1./get<TH1>(file,
-      ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
-    )->GetBinContent(3);
+    if (!old8) {
+      tree = get<TTree>(file,"CollectionTree");
 
-    // Regex for process identification
-    static regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
-                         regex_icase);
-    smatch proc_match;
-    if (!regex_match(f, proc_match, proc_re))
-      throw runtime_error(cat("Filename \"",f,"\" does not specify process"));
-    const string proc(proc_match.str(1));
+      const size_t slash = f.rfind('/')+1;
+      const double xsecscale = 1./get<TH1>(file,
+        ("CutFlow_"+f.substr(slash,f.find('.')-slash)+"_weighted").c_str()
+      )->GetBinContent(3);
 
-    // protect from repeated processes
-    static unordered_set<string> procs;
-    if (!procs.emplace(proc).second)
-      throw runtime_error(cat("File \"",f,"\" repeats process ",proc));
+      // Regex for process identification
+      static regex proc_re(".*[\\._]?(gg.|VBF|ttH|WH|ZH)[0-9]*[\\._]?.*",
+                           regex_icase);
+      smatch proc_match;
+      if (!regex_match(f, proc_match, proc_re))
+        throw runtime_error(cat("Filename \"",f,"\" does not specify process"));
+      const string proc(proc_match.str(1));
 
-    // Make or add histograms
-    make_hist(nom,"nominal",proc,xsecscale,
-              "HGamEventInfoAuxDyn.m_yy");
-    make_hist(scale_down,"scale_down",proc,xsecscale,
-              "HGamEventInfo_EG_SCALE_ALL__1downAuxDyn.m_yy");
-    make_hist(scale_up,"scale_up",proc,xsecscale,
-              "HGamEventInfo_EG_SCALE_ALL__1upAuxDyn.m_yy");
-    make_hist(res_down,"res_down",proc,xsecscale,
-              "HGamEventInfo_EG_RESOLUTION_ALL__1downAuxDyn.m_yy");
-    make_hist(res_up,"res_up",proc,xsecscale,
-              "HGamEventInfo_EG_RESOLUTION_ALL__1upAuxDyn.m_yy");
+      // protect from repeated processes
+      static unordered_set<string> procs;
+      if (!procs.emplace(proc).second)
+        throw runtime_error(cat("File \"",f,"\" repeats process ",proc));
 
-    #else
-    tree = get<TTree>(file,"Hgg_tree");
+      // Make or add histograms
+      make_hist(nom,"nominal",proc,xsecscale,
+                "HGamEventInfoAuxDyn.m_yy");
+      make_hist(scale_down,"scale_down",proc,xsecscale,
+                "HGamEventInfo_EG_SCALE_ALL__1downAuxDyn.m_yy");
+      make_hist(scale_up,"scale_up",proc,xsecscale,
+                "HGamEventInfo_EG_SCALE_ALL__1upAuxDyn.m_yy");
+      make_hist(res_down,"res_down",proc,xsecscale,
+                "HGamEventInfo_EG_RESOLUTION_ALL__1downAuxDyn.m_yy");
+      make_hist(res_up,"res_up",proc,xsecscale,
+                "HGamEventInfo_EG_RESOLUTION_ALL__1upAuxDyn.m_yy");
 
-    make_hist(nom,"nominal","all",1.,"m_yy");
-    #endif
+    } else {
+      tree = get<TTree>(file,"Hgg_tree");
+
+      make_hist(nom,"nominal","all",1.,"m_yy");
+    }
 
     delete file;
   }

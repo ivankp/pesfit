@@ -1,7 +1,7 @@
 CC  := gcc
 CXX := g++
 
-CXXFLAGS := -std=c++11 -Wall -O3
+CXXFLAGS := -std=c++11 -Wall -g3
 
 LIBS := -lboost_program_options
 
@@ -57,7 +57,7 @@ $(BLDDIR)/%.d: $(SRCDIR)/%.cc
 # compile objects
 $(BLDDIR)/%.o :
 	@echo CXX $(notdir $@)
-	@$(CXX) -c -I$(SRCDIR) $(CXXFLAGS) -DOld8TeVFile=$(Old8TeVFile) $(ROOT_CXXFLAGS) $< -o $@
+	@$(CXX) -c -I$(SRCDIR) $(CXXFLAGS) $(ROOT_CXXFLAGS) $< -o $@
 
 # link executables
 $(EXEDIR)/% : $(BLDDIR)/%.o

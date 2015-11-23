@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 
+#include <boost/program_options.hpp>
+
 #include <TFile.h>
 #include <TTree.h>
 #include <TH1.h>
@@ -21,25 +23,59 @@
 #include "golden_min.hh"
 
 using namespace std;
+namespace po = boost::program_options;
 
 #define test(var) \
   std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
-
-#ifndef Old8TeVFile
-#define Old8TeVFile 0
-#endif
 
 structmap(val_err<double>,hist_t,
   (nominal)(scale_down)(scale_up)(res_down)(res_up));
 
 int main(int argc, char** argv)
 {
-  if (argc!=3 && argc!=4) {
-    cout << "usage: " << argv[0] << " in.root out.pdf [minsig]" << endl;
-    return 0;
-  }
+  string ifname, ofname;
+  bool minsig, old8;
 
-  TFile *fin = new TFile(argv[1],"read");
+  // options ---------------------------------------------------
+  try {
+    po::options_description desc("Options");
+    desc.add_options()
+      ("input,i", po::value(&ifname)->multitoken()->required(),
+       "*input root file names")
+      ("output,o", po::value(&ofname)->required(),
+       "*output pdf or root file name")
+
+      ("minsig", po::bool_switch(&minsig),
+       "find shortest significance interval")
+      ("old8", po::bool_switch(&old8),
+       "read an old 8TeV file")
+    ;
+
+    po::positional_options_description pos;
+    pos.add("input",1);
+    pos.add("output",1);
+
+    po::variables_map vm;
+    po::store(po::command_line_parser(argc, argv)
+      .options(desc).positional(pos).run(), vm);
+    if (argc == 1) {
+      cout << desc << endl;
+      return 0;
+    }
+    po::notify(vm);
+
+    const string ofext = ofname.substr(ofname.rfind('.')+1);
+    if (ofext!="pdf") throw runtime_error(
+      "Output file extension "+ofext+" is not pdf"
+    );
+
+  } catch (exception& e) {
+    cerr << "\033[31mArgs: " <<  e.what() <<"\033[0m"<< endl;
+    return 1;
+  }
+  // end options ---------------------------------------------------
+
+  TFile *fin = new TFile(ifname.c_str(),"read");
   if (fin->IsZombie()) return 1;
 
   seqmap<hist_t> stats;
@@ -68,7 +104,7 @@ int main(int argc, char** argv)
   lbl.SetTextFont(43);
   lbl.SetTextSize(18);
   lbl.SetNDC();
-  
+
   h_nominal->SetLineWidth(1);
   h_nominal->SetLineColor(1);
   h_nominal->SetMarkerColor(1);
@@ -88,11 +124,8 @@ int main(int argc, char** argv)
 
   lbl.DrawLatex(lxmin,ly,"ATLAS")->SetTextFont(73);
   lbl.DrawLatex(lxmin+0.095,ly,"Internal");
-  #if !(Old8TeVFile)
-  lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 13 TeV");
-  #else
-  lbl.DrawLatex(lxmin,ly-=0.06,"#it{#sqrt{s}} = 8 TeV");
-  #endif
+  lbl.DrawLatex(lxmin,ly-=0.06,
+    old8 ? "#it{#sqrt{s}} = 8 TeV" : "#it{#sqrt{s}} = 13 TeV");
   lbl.DrawLatex(lxmin,ly-=0.06,"#it{H#rightarrow#gamma#gamma}, #it{m_{H}} = 125 GeV");
 
   ly-=0.075;
@@ -150,7 +183,7 @@ int main(int argc, char** argv)
 
   const Double_t integral = integrate(f_nominal);
 
-  if (argc==4 && string("minsig")==argv[3]) {
+  if (minsig) {
     golden_min gm;
 
     for (auto frac : {0.68,0.90}) {
@@ -184,7 +217,7 @@ int main(int argc, char** argv)
     ).c_str());
   }
 
-  canv.SaveAs(argv[2]);
+  canv.SaveAs(ofname.c_str());
 
   delete fin;
   return 0;
