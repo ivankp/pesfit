@@ -3,6 +3,7 @@
 #include <vector>
 #include <map>
 #include <utility>
+#include <thread>
 
 #include <TFile.h>
 #include <TTree.h>
@@ -92,15 +93,18 @@ int main(int argc, char** argv)
     trees.emplace_back(move(fname.name),fname.x.c_str());
   }
 
+  ws->var("crys_alpha_bin0")->setRange(0.5,3.);
+  ws.myy->setBins(70);
+
   // -------------------------------------------------
   // Fetch samples and
   // Merge data sets into a single combined data set
   RooRealVar wvar("weight","weight",0,2);
   map<string,RooDataSet*> sets;
   for (auto& tree : trees) {
-    sets.emplace( tree.name, new RooDataSet(
+    sets.emplace( "mc_125", new RooDataSet(
       tree.cname(), tree.cname(),
-      tree.x, RooArgSet(*ws.myy,wvar), 0, "weight"
+      tree.x, RooArgSet(*ws.myy,wvar)
     ) );
   }
   // Build merged RooDataSet
@@ -108,7 +112,14 @@ int main(int argc, char** argv)
     RooArgSet(*ws.myy,wvar),
     RooFit::Index(*ws.cat),
     RooFit::Import(sets),
-    RooFit::WeightVar(wvar));
+    RooFit::WeightVar(wvar)
+  );
+
+  cout << endl << endl;
+  ws.cat->Print("v");
+  cout << endl << endl;
+  set.Print("v");
+  cout << endl << endl;
 
   // -------------------------------------------------
   // Perform the Fit
@@ -116,35 +127,35 @@ int main(int argc, char** argv)
     RooFit::Extended(false),
     RooFit::SumW2Error(true),
     RooFit::Save(true),
-    RooFit::NumCPU(4),
-    RooFit::Strategy(2)
+    RooFit::NumCPU(std::thread::hardware_concurrency()),
+    RooFit::Strategy(2),
+    RooFit::Minimizer("Minuit2"),
+    RooFit::Offset(true)
   );
 
   fit->Print("v");
 
   TCanvas canv;
   canv.SetMargin(0.1,0.04,0.1,0.1);
-  canv.SetLogy();
+  // canv.SetLogy();
   // canv.SaveAs(cat(argv[1],'[').c_str());
 
   for (auto& tree : trees) {
     static int i=0;
-    RooPlot *frame = ws.myy->frame(RooFit::Title(" "/*tree.cname()*/));
+    RooPlot *frame = ws.myy->frame(RooFit::Title(tree.cname()));
     // Draw Monte Carlo histogram
     set.plotOn(frame,
       RooFit::MarkerColor(40+10*i),
       RooFit::MarkerSize(0.5),
-      RooFit::Cut(cat("mc_sample == mc_sample::",tree.name).c_str())
+      RooFit::Cut("mc_sample == mc_sample::mc_125")
     );
     // Draw fitted function
-    // !!!!!!!!!!!!!!!!!!!!!!!!!! I get a segfault here!!!
-    // ws.sim_pdf->plotOn(frame,
-    //   RooFit::LineColor(85),
-    //   RooFit::Slice(*ws.cat, tree.cname()),
-    //   RooFit::ProjWData(RooArgSet(*ws.cat), set)
-    //   // RooFit::Precision(1e-5)
-    // );
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!
+    ws.sim_pdf->plotOn(frame,
+      RooFit::LineColor(85),
+      RooFit::Slice(*ws.cat, "mc_125"),
+      RooFit::ProjWData(RooArgSet(*ws.cat), set),
+      RooFit::Precision(1e-5)
+    );
 
     // auto *curve = frame->getCurve();
     frame->Draw(i++ ? "same" : "");
