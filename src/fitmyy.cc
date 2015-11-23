@@ -104,7 +104,7 @@ int main(int argc, char** argv)
   for (auto& tree : trees) {
     sets.emplace( "mc_125", new RooDataSet(
       tree.cname(), tree.cname(),
-      tree.x, RooArgSet(*ws.myy,wvar)
+      tree.x, RooArgSet(*ws.myy,wvar), 0, "weight"
     ) );
   }
   // Build merged RooDataSet
