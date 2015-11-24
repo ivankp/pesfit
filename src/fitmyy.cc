@@ -4,16 +4,12 @@
 #include <map>
 #include <utility>
 #include <thread>
+#include <cstring>
 
 #include <TFile.h>
 #include <TTree.h>
-#include <TH1.h>
-#include <TGraph.h>
-#include <TStyle.h>
 #include <TCanvas.h>
-#include <TAxis.h>
-#include <TLatex.h>
-#include <TLegend.h>
+#include <TH1.h>
 
 #include <RooWorkspace.h>
 #include <RooRealVar.h>
@@ -23,13 +19,18 @@
 #include <RooFitResult.h>
 #include <RooPlot.h>
 #include <RooCurve.h>
+#include <RooHist.h>
 
 #include "root_safe_get.hh"
 #include "assert_ext.hh"
-#include "named.hh"
 #include "catstr.hh"
+#include "TGraph_fcns.hh"
+#include "golden_min.hh"
 
 using namespace std;
+
+#define test(var) \
+  std::cout <<"\033[36m"<< #var <<"\033[0m"<< " = " << var << std::endl;
 
 struct workspace {
   TFile *file;
@@ -74,45 +75,45 @@ public:
 
 int main(int argc, char** argv)
 {
-  if (argc<4) {
+  if (argc!=4 && argc!=5 && argc!=6) {
     cout << "usage: " << argv[0]
-         << " output.(root|pdf) workspace.root"
-            " name:input.root [name:input2.root ...]" << endl;
+         << " workspace.root input.root output.(root|pdf)"
+            " name [-w] [-l]" << endl;
     return 1;
   }
-  assert_ext(argv[1],{"root","pdf"});
-  assert_ext(&argv[2],argc-2,{"root"});
+  assert_ext(argv+1,2,{"root"});
+  assert_ext(argv[3],{"root","pdf"});
 
-  workspace ws(argv[2]);
-
-  vector<named<mc_tree_ptr>> trees;
-  trees.reserve(argc-3);
-  for (int i=3; i<argc; ++i) {
-    named<string> fname;
-    stringstream(argv[i]) >> fname;
-    trees.emplace_back(move(fname.name),fname.x.c_str());
+  bool w = false, logy = false;
+  string name;
+  for (int i=4; i<argc; ++i) {
+    if (argv[i][0]!='-') name = argv[i];
+    else if (!strcmp(argv[i],"-w")) w = true;
+    else if (!strcmp(argv[i],"-l")) logy = true;
   }
 
-  ws->var("crys_alpha_bin0")->setRange(0.5,3.);
+  workspace ws(argv[1]);
+  mc_tree_ptr tree(argv[2]);
+  const string ofname(argv[3]);
+
   ws.myy->setBins(70);
 
-  // -------------------------------------------------
-  // Fetch samples and
-  // Merge data sets into a single combined data set
   RooRealVar wvar("weight","weight",0,2);
-  map<string,RooDataSet*> sets;
-  for (auto& tree : trees) {
-    sets.emplace( "mc_125", new RooDataSet(
-      tree.cname(), tree.cname(),
-      tree.x, RooArgSet(*ws.myy,wvar), 0, "weight"
-    ) );
-  }
+
   // Build merged RooDataSet
   RooDataSet set("m_yy_set", "m_yy_set",
-    RooArgSet(*ws.myy,wvar),
+    w ? RooArgSet(*ws.myy,wvar) : RooArgSet(*ws.myy),
     RooFit::Index(*ws.cat),
-    RooFit::Import(sets),
-    RooFit::WeightVar(wvar)
+    RooFit::Import(map<string,RooDataSet*> {
+      {"mc_125", new RooDataSet(
+        name.c_str(), name.c_str(),
+        tree,
+        w ? RooArgSet(*ws.myy,wvar) : RooArgSet(*ws.myy),
+        0,
+        w ? "weight" : 0
+      )}
+    }),
+    w ? RooFit::WeightVar(wvar) : RooCmdArg()
   );
 
   cout << endl << endl;
@@ -125,7 +126,7 @@ int main(int argc, char** argv)
   // Perform the Fit
   RooFitResult* fit = ws.sim_pdf->fitTo(set,
     RooFit::Extended(false),
-    RooFit::SumW2Error(true),
+    RooFit::SumW2Error(w),
     RooFit::Save(true),
     RooFit::NumCPU(std::thread::hardware_concurrency()),
     RooFit::Strategy(2),
@@ -135,33 +136,79 @@ int main(int argc, char** argv)
 
   fit->Print("v");
 
-  TCanvas canv;
-  canv.SetMargin(0.1,0.04,0.1,0.1);
-  // canv.SetLogy();
-  // canv.SaveAs(cat(argv[1],'[').c_str());
+  RooPlot *frame = ws.myy->frame(RooFit::Title(name.size() ? name.c_str() : argv[2]));
+  // Draw Monte Carlo histogram
+  set.plotOn(frame,
+    RooFit::MarkerColor(50),
+    RooFit::MarkerSize(0.5)
+  );
+  // Draw fitted function
+  ws.sim_pdf->plotOn(frame,
+    RooFit::LineColor(85),
+    RooFit::Slice(*ws.cat, "mc_125"),
+    RooFit::ProjWData(RooArgSet(*ws.cat), set),
+    RooFit::Precision(1e-5)
+  );
+  
+  TFile *file = (ofname.substr(ofname.rfind('.')+1)=="root")
+    ? new TFile(ofname.c_str(),"recreate") : nullptr;
 
-  for (auto& tree : trees) {
-    static int i=0;
-    RooPlot *frame = ws.myy->frame(RooFit::Title(tree.cname()));
-    // Draw Monte Carlo histogram
-    set.plotOn(frame,
-      RooFit::MarkerColor(40+10*i),
-      RooFit::MarkerSize(0.5),
-      RooFit::Cut("mc_sample == mc_sample::mc_125")
-    );
-    // Draw fitted function
-    ws.sim_pdf->plotOn(frame,
-      RooFit::LineColor(85),
-      RooFit::Slice(*ws.cat, "mc_125"),
-      RooFit::ProjWData(RooArgSet(*ws.cat), set),
-      RooFit::Precision(1e-5)
-    );
-
-    // auto *curve = frame->getCurve();
-    frame->Draw(i++ ? "same" : "");
+  TCanvas *canv = new TCanvas();
+  if (!file) {
+    canv->SetMargin(0.1,0.04,0.1,0.1);
+    if (logy) canv->SetLogy();
   }
-  canv.SaveAs(argv[1]);
-  // canv.SaveAs(cat(argv[1],']').c_str());
+
+  frame->Draw();
+
+  if (file) {
+    file = new TFile(ofname.c_str(),"recreate");
+    TTree *tree = new TTree("stats","CB+GA fit parameters");
+    
+    auto *hist = new TGraphAsymmErrors(*frame->getHist("h_m_yy_set"));
+    hist->SetTitle("MC pseudo-data");
+    hist->Write("hist");
+    auto *fcn = new TGraph(*frame->getCurve());
+    fcn->SetTitle("Fitted function");
+    fcn->Write("fcn");
+    
+    vector<pair<string,pair<Double_t,Double_t>>> pars {
+      {"crys_alpha_bin0",{}},
+      {"crys_norm_bin0",{}},
+      {"fcb_bin0",{}},
+      {"gaus_kappa_bin0",{}},
+      {"gaus_mean_offset_bin0",{}},
+      {"mean_offset_bin0",{}},
+      {"sigma_offset_bin0",{}},
+      {"sigma_68",{}}
+    };
+    auto par = pars.begin();
+    for (auto end=pars.end()-1; par<end; ++par) {
+      auto *var = static_cast<RooRealVar*>(
+        fit->floatParsFinal().find(par->first.c_str()));
+      par->second = {var->getVal(),var->getError()};
+    }
+    
+    const Double_t integral = integrate(fcn);
+    const double frac = 0.68;
+    golden_min gm;
+    auto x1 = gm( [fcn,frac,integral](double x1) {
+      return intervalx2(fcn, frac, x1, integral) - x1;
+    }, firstx(fcn), rtailx(fcn,frac,integral) ).first;
+    auto x2 = intervalx2(fcn, frac, x1, integral);
+    par->second = {x1,x2};
+    
+    for (const auto& par : pars)
+      tree->Branch(par.first.c_str(), (void*)&par.second,
+                   (par.first+"[2]/D").c_str());
+
+    tree->Fill();
+    file->Write(0,TObject::kOverwrite);
+    delete file;
+  } else {
+    canv->SaveAs(ofname.c_str());
+  }
+  delete canv;
 
   delete fit;
   return 0;
