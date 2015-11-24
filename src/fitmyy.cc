@@ -48,7 +48,7 @@ public:
     cat(static_cast<RooCategory*>(ws->obj("mc_sample"))),
     myy(static_cast<RooRealVar*>(ws->var("m_yy")))
   { }
-  ~workspace()  {
+  ~workspace() {
     delete myy;
     delete cat;
     delete sim_pdf;
@@ -149,7 +149,7 @@ int main(int argc, char** argv)
     RooFit::ProjWData(RooArgSet(*ws.cat), set),
     RooFit::Precision(1e-5)
   );
-  
+
   TFile *file = (ofname.substr(ofname.rfind('.')+1)=="root")
     ? new TFile(ofname.c_str(),"recreate") : nullptr;
 
@@ -164,14 +164,14 @@ int main(int argc, char** argv)
   if (file) {
     file = new TFile(ofname.c_str(),"recreate");
     TTree *tree = new TTree("stats","CB+GA fit parameters");
-    
+
     auto *hist = new TGraphAsymmErrors(*frame->getHist("h_m_yy_set"));
     hist->SetTitle("MC pseudo-data");
     hist->Write("hist");
     auto *fcn = new TGraph(*frame->getCurve());
     fcn->SetTitle("Fitted function");
     fcn->Write("fcn");
-    
+
     vector<pair<string,pair<Double_t,Double_t>>> pars {
       {"crys_alpha_bin0",{}},
       {"crys_norm_bin0",{}},
@@ -180,24 +180,29 @@ int main(int argc, char** argv)
       {"gaus_mean_offset_bin0",{}},
       {"mean_offset_bin0",{}},
       {"sigma_offset_bin0",{}},
-      {"sigma_68",{}}
+      {"fwhm",{}},
+      {"sigma_68",{}},
+      {"sigma_90",{}}
     };
     auto par = pars.begin();
-    for (auto end=pars.end()-1; par<end; ++par) {
+    for (auto end=pars.end()-3; par<end; ++par) {
       auto *var = static_cast<RooRealVar*>(
         fit->floatParsFinal().find(par->first.c_str()));
       par->second = {var->getVal(),var->getError()};
     }
-    
+
+    (par++)->second = {fwhm(fcn),0.};
+
     const Double_t integral = integrate(fcn);
-    const double frac = 0.68;
-    golden_min gm;
-    auto x1 = gm( [fcn,frac,integral](double x1) {
-      return intervalx2(fcn, frac, x1, integral) - x1;
-    }, firstx(fcn), rtailx(fcn,frac,integral) ).first;
-    auto x2 = intervalx2(fcn, frac, x1, integral);
-    par->second = {x1,x2};
-    
+    for (double frac : {0.68,0.9}) {
+      golden_min gm;
+      auto x1 = gm( [fcn,frac,integral](double x1) {
+        return intervalx2(fcn, frac, x1, integral) - x1;
+      }, firstx(fcn), rtailx(fcn,frac,integral) ).first;
+      auto x2 = intervalx2(fcn, frac, x1, integral);
+      (par++)->second = {x1,x2};
+    }
+
     for (const auto& par : pars)
       tree->Branch(par.first.c_str(), (void*)&par.second,
                    (par.first+"[2]/D").c_str());

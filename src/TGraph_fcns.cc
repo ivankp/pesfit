@@ -6,6 +6,7 @@
 #include <sstream>
 #include <algorithm>
 #include <stdexcept>
+#include <cmath>
 
 #include <iostream>
 
@@ -165,10 +166,10 @@ Double_t intervalx2(const TGraph* gr, Double_t frac, Double_t x1, Double_t total
     ss << x1 << " < " << *x;
     throw out_of_range(ss.str());
   }
-  
+
   if (totalint==0.) totalint = integrate(gr);
   totalint *= frac*2;
-  
+
   Double_t a = (y[k]-y[k-1])/(x[k]-x[k-1]);
   Double_t b = y[k] - a*x[k];
   Double_t integral = (x[k]-x1)*(y[k]+(a*x1+b));
@@ -187,13 +188,18 @@ Double_t intervalx2(const TGraph* gr, Double_t frac, Double_t x1, Double_t total
       break;
     } else integral += part;
   }
-  
+
   if (!enough) {
     stringstream ss;
     ss << "Integral from x1=" << x1 << " is less then "
-       << frac << " of the total"; 
+       << frac << " of the total";
     throw out_of_range(ss.str());
   }
 
   return x2;
+}
+
+Double_t fwhm(const TGraph* gr) noexcept {
+  const Double_t half_max = max(gr).second/2;
+  return rfindx(gr,half_max) - lfindx(gr,half_max);
 }

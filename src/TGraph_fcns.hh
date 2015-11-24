@@ -19,4 +19,6 @@ Double_t rtailx(const TGraph* gr, Double_t frac, Double_t totalint=0.) noexcept;
 
 Double_t intervalx2(const TGraph* gr, Double_t frac, Double_t x1, Double_t totalint=0.) noexcept;
 
+Double_t fwhm(const TGraph* gr) noexcept;
+
 #endif
