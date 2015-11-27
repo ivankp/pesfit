@@ -3,3 +3,5 @@
 /.build
 /*.pdf
 /*.root
+/plot1/*.pdf
+/plot1/*.root
