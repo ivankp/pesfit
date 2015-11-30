@@ -72,6 +72,7 @@ int main(int argc, char** argv)
     }
   }
   test(right)
+  cout << "width = " << right-left << endl;
 
   cout << "\n" << frac << " interval from center" << endl;
 
@@ -86,6 +87,7 @@ int main(int argc, char** argv)
   right = hist.GetBinLowEdge(l ? b+1 : b);
   test(left)
   test(right)
+  cout << "width = " << right-left << endl;
 
   delete file;
   return 0;
